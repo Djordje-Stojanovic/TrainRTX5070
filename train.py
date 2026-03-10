@@ -82,42 +82,28 @@ AUTOTUNE_MAX_MEMORY_FRACTION = 0.90
 AUTOTUNE_CACHE_VERSION = "gpu-profile-v3"
 
 
-def _get_gpu_peak_flops(gpu_name):
-    name = gpu_name.lower()
-    lookup = (
-        ("5090", 360.0e12),
-        ("4090 d", 280.0e12),
-        ("4090d", 280.0e12),
-        ("4090", 330.3e12),
-        ("5080", 280.0e12),
-        ("4080 super", 260.0e12),
-        ("4070 ti super", 176.4e12),
-        ("4070 ti", 160.4e12),
-        ("4070 super", 142.2e12),
-        ("4070", 116.8e12),
-        ("4080", 242.5e12),
-        ("5070 ti", 190.0e12),
-        ("5070", 150.0e12),
-        ("5060 ti", 120.0e12),
-        ("4060 ti", 88.4e12),
-        ("2080 ti", 107.5e12),
-        ("2080 super", 89.6e12),
-        ("2080", 80.3e12),
-        ("2070 super", 72.6e12),
-        ("2070", 59.7e12),
-        ("2060 super", 57.4e12),
-        ("2060", 52.4e12),
-        ("3090 ti", 160.0e12),
-        ("3090", 142.6e12),
-        ("3080 ti", 136.0e12),
-        ("3080", 119.5e12),
-        ("3060", 51.0e12),
-        ("3070", 81.1e12),
-    )
-    for key, flops in lookup:
-        if key in name:
-            return flops
-    return None
+def _benchmark_gpu_peak_flops(device, dtype, duration=1.0):
+    """Measure actual GPU peak FLOPS by running large matmuls for ~1 second."""
+    n = 4096
+    a = torch.randn(n, n, device=device, dtype=dtype)
+    b = torch.randn(n, n, device=device, dtype=dtype)
+    flops_per_matmul = 2 * n * n * n  # 2*N^3 for matmul
+    # Warmup
+    for _ in range(3):
+        torch.mm(a, b)
+    torch.cuda.synchronize()
+    # Benchmark
+    start = time.time()
+    count = 0
+    while time.time() - start < duration:
+        torch.mm(a, b)
+        count += 1
+    torch.cuda.synchronize()
+    elapsed = time.time() - start
+    peak_flops = flops_per_matmul * count / elapsed
+    del a, b
+    torch.cuda.empty_cache()
+    return peak_flops
 
 
 def _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows):
@@ -290,7 +276,7 @@ def detect_runtime():
         attention_backend=attention_backend,
         gpu_name=gpu_name,
         gpu_vram_gb=gpu_vram_gb,
-        gpu_peak_flops=_get_gpu_peak_flops(gpu_name),
+        gpu_peak_flops=_benchmark_gpu_peak_flops(device, amp_dtype),
         gpu_cc=gpu_cc,
         gpu_total_memory_bytes=gpu_total_memory_bytes,
         tf32_enabled=tf32_enabled,
@@ -1178,6 +1164,8 @@ def main():
     print(f"Consumer matrix support: {'yes' if runtime.gpu_profile.is_supported_consumer else 'compatibility path'}")
     print(f"TF32: {'enabled' if runtime.tf32_enabled else 'disabled'}")
     print(f"AMP dtype: {runtime.amp_dtype}")
+    if runtime.gpu_peak_flops:
+        print(f"GPU peak FLOPS: {runtime.gpu_peak_flops / 1e12:.1f} TFLOPS ({runtime.amp_dtype}, measured)")
 
     tokenizer = Tokenizer.from_directory(dataset=args.dataset)
     vocab_size = tokenizer.get_vocab_size()
