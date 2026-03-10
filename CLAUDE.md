@@ -132,9 +132,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 ## Bottleneck-First Rule
 
-**Every experiment must target the top structural bottleneck.** A bottleneck is a metric significantly below its potential — GPU utilization (MFU), VRAM usage, training stability, loss curve shape. These are structural problems that require structural fixes (architecture changes, memory optimization, training loop improvements, etc.).
-
-Adjusting a hyperparameter value (learning rate, weight decay, warmup ratio, batch size) is **tuning**, not bottleneck fixing. Only tune hyperparameters when no structural bottleneck remains. If a structural metric is clearly underperforming, fix that first.
+**Every experiment must target whatever is most limiting val_bpb.** Check your metrics (MFU, VRAM, training stability, loss curve) and decide what to improve. This could be a structural change (architecture, memory, training loop) OR hyperparameter tuning — whichever has the highest expected impact. If a structural metric is clearly broken (loss diverging, OOM), fix that first. Otherwise, use your judgment.
 
 Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`.
 
