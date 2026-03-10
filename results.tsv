@@ -2,3 +2,4 @@ commit	val_bpb	memory_gb	mfu	tok_per_sec	num_steps	num_params_M	batch_size	final
 3087aeb	2.335670	3.7	23.9	37700	180	162.1	4	5.155	keep	baseline (SwiGLU d12 ClimbMix) — BROKEN cooldown: loss 1.50→5.15 during warmdown
 81dd182	2.494669	3.7	22.1	33477	167	162.1	4	3.811	discard	constant WD (remove decay) + WARMDOWN_RATIO 0.4→0.3 — warmdown still broken
 8da6023	2.141833	3.7	23.9	36982	180	162.1	4	4.950	keep	WARMDOWN_RATIO 0.4→0.0 (no warmdown): loss STILL explodes ~step160 (1.5→5.0) proving instability is NOT warmdown-related but model/optimizer bug
+0708cec	2.238187	3.7	21.9	33522	166	162.1	4	3.136	discard	grad clip max_norm=1.0 + WARMDOWN_RATIO=0.4: loss spike reduced (5.0→3.1) but NOT eliminated, clip alone insufficient — need to fix root cause (Q/K weight growth per Moonshot paper)
