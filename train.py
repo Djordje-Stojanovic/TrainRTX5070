@@ -132,7 +132,7 @@ def _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows):
                 name=mid_tier_name,
                 is_supported_consumer=True,
                 is_compatibility_only=False,
-                train_batch_candidates=(16, 8, 4, 2),
+                train_batch_candidates=(16, 12, 8, 6, 5, 4, 3, 2),
                 checkpoint_modes=(True,),
                 default_checkpointing=True,
             )

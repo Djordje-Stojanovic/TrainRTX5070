@@ -49,12 +49,13 @@ Read **`program.md`** for the full experiment loop protocol, logging format, and
 
 | Component | Current State |
 |-----------|--------------|
-| Model | SwiGLU MLP, RoPE, d12 (768 dim, 6 heads), ~162M params |
+| Model | SwiGLU MLP, RoPE, value embeddings, d12 (768 dim, 6 heads), ~200M params (AI evolves this) |
 | Dataset | ClimbMix (nvidia/Nemotron-ClimbMix), pre-tokenized with GPT-2 |
 | Tokenizer | GPT-2 (vocab=50257), EOT token as BOS |
 | Optimizer | Muon (matrices) + AdamW (embeddings, scalars) |
 | Compile | torch.compile via triton-windows |
 | Attention | SDPA with is_causal=True (FlashAttention fast path) |
+| MFU | ~53-58% (measured via runtime benchmark, not lookup table) |
 | Time budget | 20 minutes per experiment |
 | Metric | val_bpb (bits per byte) — lower is better |
 
@@ -103,7 +104,7 @@ These are the **fairness invariants** that make experiments comparable:
 
 - **GPU:** RTX 5070, 12GB VRAM, Blackwell CC 12.0
 - **Peak VRAM target:** <11.5 GB (96% of 12GB)
-- **Autotune:** Automatically finds best device_batch_size + checkpointing combo, then **caches the result**. The cache key is GPU+PyTorch+seq_len — it does NOT include model size or TOTAL_BATCH_SIZE. So if you change model architecture/depth/width, the cached batch_size may be wrong.
+- **Autotune:** Automatically finds best device_batch_size + checkpointing combo from candidates (16, 12, 8, 6, 5, 4, 3, 2), then **caches the result**. The cache key is GPU+PyTorch+seq_len — it does NOT include model size or TOTAL_BATCH_SIZE. So if you change model architecture/depth/width, the cached batch_size may be wrong.
 - **After model size changes:** refresh autotune with `AUTORESEARCH_AUTOTUNE_REFRESH=1`
 - **Autotune cache location:** `~\AppData\Local\autoresearch\gpu-profile-v3.json` — you can read this to see current training VRAM and tok/sec
 - If OOM at all batch sizes, reduce model size or enable more aggressive checkpointing

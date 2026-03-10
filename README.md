@@ -30,10 +30,11 @@ The AI agent loops forever: change code, train 20 minutes, measure val_bpb (bits
 
 | Component | Details |
 |-----------|---------|
-| GPU | RTX 5070 12GB (Blackwell CC 12.0) |
-| Model | SwiGLU MLP, RoPE, ~162M params (AI evolves this) |
+| GPU | RTX 5070 12GB (Blackwell CC 12.0, ~66 TFLOPS BF16) |
+| Model | SwiGLU MLP, RoPE, value embeddings, ~200M params (AI evolves this) |
 | Dataset | ClimbMix (nvidia/Nemotron-ClimbMix), GPT-2 tokenizer |
 | Optimizer | Muon (matrices) + AdamW (embeddings) |
+| MFU | ~53-58% (runtime benchmarked, not hardcoded) |
 | Time budget | 20 minutes per experiment (~3 experiments/hour) |
 | Metric | val_bpb — lower is better |
 
