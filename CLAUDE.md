@@ -135,7 +135,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 After every experiment, check these metrics in order:
 
-1. **VRAM utilization**: `peak_vram_mb` in the training output and results.tsv is EVAL vram (~3.7GB), NOT training VRAM. Training VRAM is higher (~8.5GB for current 162M model). To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. If training VRAM is well below 11.5GB, you have room for a bigger model.
+1. **VRAM utilization**: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. Training VRAM is significantly higher. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. If training VRAM is well below 11.5GB, you have room for a bigger model.
 2. **MFU**: Target 30%+ on this RTX 5070. Currently ~24%. Below 25% means throughput problem — too much gradient accumulation, bad batch size, or inefficient ops.
 3. **Training stability**: If loss spikes or explodes, fix that before anything else. Search the web for current best practices with your optimizer.
 4. **Loss curve shape**: If loss plateaus early, model likely needs more capacity or different architecture, not hyperparameter tuning.
