@@ -9,7 +9,7 @@
 ## Start the AI agent
 
 ```
-Read program.md and CLAUDE.md. Continue the experiment loop on the autoresearch/mar10 branch. The baseline is already recorded in results.tsv. Start experimenting. Remember to git pull first and do a landscape scan web search before your first experiment.
+Read @program.md and @CLAUDE.md. Continue the experiment loop on the autoresearch/mar10 branch. The baseline is already recorded in results.tsv. Start experimenting. Remember to git pull first and do a landscape scan web search before your first experiment.
 ```
 
 Paste this into Claude Code (with bypass permissions on). Monitor in two PowerShell windows:
