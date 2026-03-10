@@ -139,6 +139,8 @@ After every experiment, check these metrics in order:
 
 **Fix bottlenecks in order. Never tune hyperparameters if training is unstable.**
 
+**Hypothesis protocol (mandatory):** Every commit message must include: `Bottleneck: [X]. Hypothesis: [Y] because [Z]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. After reverting a failed experiment, re-read train.py to confirm what state you're in — reverts undo ALL changes from that experiment, not just the one you're thinking about.
+
 ## When Stuck — Use Web Search
 
 If you've tried 2-3 experiments in the same direction and nothing works, **search the web.**
