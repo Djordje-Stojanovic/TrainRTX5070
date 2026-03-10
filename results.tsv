@@ -1,2 +1,3 @@
 commit	val_bpb	memory_gb	mfu	tok_per_sec	num_steps	num_params_M	batch_size	final_loss	status	description
 3087aeb	2.335670	3.7	23.9	37700	180	162.1	4	5.155	keep	baseline (SwiGLU d12 ClimbMix) — BROKEN cooldown: loss 1.50→5.15 during warmdown
+81dd182	2.494669	3.7	22.1	33477	167	162.1	4	3.811	discard	constant WD (remove decay) + WARMDOWN_RATIO 0.4→0.3 — warmdown still broken
