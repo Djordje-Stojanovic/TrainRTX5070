@@ -30,9 +30,12 @@ git commit -m "revert: undo <description>"
 git push origin autoresearch/mar10
 ```
 
-**Description column MUST be diagnostic.** Include: (1) what changed with values, (2) what happened, (3) WHY it failed/succeeded.
+**Description column MUST be diagnostic.** Include: (1) what changed with values, (2) what happened, (3) WHY it failed/succeeded. This prevents future sessions from repeating a failed DIRECTION, not just a failed value.
 - Bad: "WARMDOWN_RATIO 0.4→0.3"
 - Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD: loss still explodes 1.77→3.81, proves instability is NOT warmdown-related"
+- Good: "DEPTH 12→14 (n_embd=896, ~220M): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
+
+**Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed direction.
 
 ## What is this?
 
@@ -85,24 +88,15 @@ results.tsv     — Experiment log (created during runs).
 - Adding a package is allowed if it enables a real optimization (e.g., a fused kernel)
 - Do not add packages speculatively
 
-## Commands
+## What You Must Not Change
 
-```bash
-# Prepare data (one-time)
-uv run prepare.py --dataset climbmix
+These are the **fairness invariants** that make experiments comparable:
 
-# Smoke test (~30s)
-uv run train.py --smoke-test
-
-# Full experiment (~20 min + startup/eval)
-uv run train.py
-
-# Run and capture output
-uv run train.py > run.log 2>&1
-
-# Check results
-grep "^val_bpb:\|^peak_vram_mb:\|^mfu_percent:" run.log
-```
+1. **`TIME_BUDGET = 1200`** (20 minutes) — the fixed training wall clock
+2. **`MAX_SEQ_LEN = 2048`** — context length
+3. **`evaluate_bpb()`** — the metric definition (nats per byte -> bits per byte)
+4. **Dataset/tokenizer identity** — ClimbMix with GPT-2 tokenizer
+5. **Evaluation data** — the val split must remain untouched
 
 ## Hardware Constraints
 
@@ -110,6 +104,7 @@ grep "^val_bpb:\|^peak_vram_mb:\|^mfu_percent:" run.log
 - **Peak VRAM target:** <11.5 GB (96% of 12GB)
 - **Autotune:** Automatically finds best batch_size + checkpointing combo
 - If OOM at all batch sizes, reduce model size or enable more aggressive checkpointing
+- **After model size changes:** refresh autotune with `AUTORESEARCH_AUTOTUNE_REFRESH=1` or the cached batch_size may be wrong
 
 ## Continuing a Run
 
@@ -133,19 +128,40 @@ Training takes ~25 min total (20 min training + ~5 min startup/compile/eval).
 
 Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 min.
 
+## Bottleneck Diagnosis (check BEFORE planning next experiment)
+
+After every experiment, check these metrics in order:
+
+1. **VRAM utilization**: Training VRAM (from autotune) is ~8.5GB. If significantly below this after a model change, you may have room for a bigger model. But note: `peak_vram_mb` in results is EVAL vram (~3.7GB), not training. Don't confuse them.
+2. **MFU**: Target 30%+ on this RTX 5070. Currently ~24%. Below 25% means throughput problem — too much gradient accumulation, bad batch size, or inefficient ops.
+3. **Training stability**: If loss spikes or explodes, fix that before anything else. Search the web for current best practices with your optimizer.
+4. **Loss curve shape**: If loss plateaus early, model likely needs more capacity or different architecture, not hyperparameter tuning.
+
+**Fix bottlenecks in order. Never tune hyperparameters if training is unstable.**
+
 ## When Stuck — Use Web Search
 
 If you've tried 2-3 experiments in the same direction and nothing works, **search the web.**
 
 - Examples: "Muon optimizer learning rate schedule 2025", "efficient transformer training 12GB GPU 2026"
 - Look at nanochat leaderboard winners: search "nanochat autoresearch improvements"
+- For proven techniques at this scale: "modded-nanogpt record", "nanochat leaderboard"
+- For specific problems: "[problem] [optimizer] [year]"
 - **Always search for current SOTA (2025-2026).** Add the year to searches.
+- **Every 5th experiment:** do a "landscape scan" search to find techniques you haven't considered.
 
 Don't waste 5 experiments guessing when a 10-second search could tell you the answer.
 
+## Context Window Management
+
+Your context is finite. To maximize experiments per session:
+- **Never read whole files** — use `grep -n "PATTERN" train.py` instead of reading the whole thing
+- **Never cat run.log** — always use `grep` for specific metrics
+- After 8+ experiments, re-read `results.tsv` to refresh what was tried
+- Keep commit messages informative — they're your notes for after context truncation
+
 ## Tips for Good Experiments
 
-- Always run the baseline first before changing anything
 - Make one change at a time when possible — easier to attribute improvements
 - If val_bpb doesn't improve, revert (don't accumulate neutral changes)
 - MFU matters: more compute per second = more learning per experiment
