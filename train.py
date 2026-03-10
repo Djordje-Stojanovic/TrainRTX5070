@@ -7,6 +7,7 @@ Usage: uv run train.py
 import argparse
 import gc
 import json
+import math
 import os
 import platform
 import time
@@ -1049,7 +1050,8 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         if progress < 1.0 - WARMDOWN_RATIO:
             return 1.0
         cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cosine_decay = 0.5 * (1 + math.cos(math.pi * (1 - cooldown)))
+        return cosine_decay * 1.0 + (1 - cosine_decay) * FINAL_LR_FRAC
 
     def get_muon_momentum(step):
         frac = min(step / 300, 1)
