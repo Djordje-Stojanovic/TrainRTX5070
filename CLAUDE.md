@@ -116,6 +116,8 @@ After EVERY experiment (keep, discard, or crash):
 
 **Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed experiment. If a direction was tried and failed, try a different direction.
 
+**Push to GitHub after every experiment** so progress is visible remotely: `git push origin autoresearch/mar10`.
+
 This ensures the human can always see what happened, even if the AI session crashes mid-loop.
 
 ## Tips for Good Experiments
