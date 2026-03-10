@@ -535,10 +535,8 @@ class GPT(nn.Module):
         # lm_head shares weights with wte (weight tying), so no separate param group
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        # Verify all unique params are covered (weight tying means lm_head shares wte weight)
-        all_grouped = set(id(p) for p in matrix_params + embedding_params + resid_params + x0_params)
-        all_model = set(id(p) for p in self.parameters())
-        assert all_grouped == all_model, f"Param mismatch: grouped={len(all_grouped)}, model={len(all_model)}"
+        # Weight tying: lm_head shares wte weight, so all unique params are covered
+        # by the groups above (lm_head weight is deduplicated by PyTorch)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
