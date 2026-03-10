@@ -9,7 +9,7 @@
 ## Start the AI agent
 
 ```
-Read program.md and CLAUDE.md. Continue the experiment loop on the autoresearch/mar10 branch. The baseline is already recorded in results.tsv. Start experimenting.
+Read program.md and CLAUDE.md. Continue the experiment loop on the autoresearch/mar10 branch. The baseline is already recorded in results.tsv. Start experimenting. Remember to git pull first and do a landscape scan web search before your first experiment.
 ```
 
 Paste this into Claude Code (with bypass permissions on). Monitor in two PowerShell windows:
@@ -71,7 +71,7 @@ uv run train.py
 
 ## Design
 
-- **Single file to modify.** The AI only touches `train.py`. Diffs are reviewable, changes are attributable.
+- **Primary file to modify.** The AI primarily edits `train.py` (model + training loop). `prepare.py` dataloader changes are allowed but fairness-locked metrics are not.
 - **Fixed 20-minute budget.** Every experiment gets exactly 20 minutes of training. This makes results comparable regardless of what the AI changes (model size, batch, architecture).
 - **Fairness invariants.** Time budget, sequence length, tokenizer, dataset, and eval function are locked. The AI optimizes the model and training, not the measurement.
 - **Self-contained.** One GPU, one file, one metric. No distributed training, no complex configs.
