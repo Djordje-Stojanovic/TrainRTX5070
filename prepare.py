@@ -16,6 +16,7 @@ import argparse
 import math
 import os
 import pickle
+import random
 import shutil
 import time
 
@@ -591,11 +592,13 @@ def _list_climbmix_shards(dataset_name="climbmix"):
     return [os.path.join(data_dir, name) for name in files]
 
 
-def _iter_climbmix_tokens(split, dataset_name="climbmix"):
+def _iter_climbmix_tokens(split, dataset_name="climbmix", shuffle_seed=None):
     """Yield pre-tokenized documents from ClimbMix parquet shards.
 
     Each document is a list of token IDs (ints). For val split, uses last shard.
     For train split, uses all shards except the last.
+    If shuffle_seed is not None, shuffles documents within each shard to avoid
+    topic-clustered ordering that can cause training instability.
     """
     shard_paths = _list_climbmix_shards(dataset_name)
     if not shard_paths:
@@ -612,7 +615,7 @@ def _iter_climbmix_tokens(split, dataset_name="climbmix"):
             shard_paths = shard_paths[:-1]
         # If only 1 shard, use it for both train and val (not ideal but functional)
 
-    for shard_path in shard_paths:
+    for shard_idx, shard_path in enumerate(shard_paths):
         try:
             table = pq.read_table(shard_path)
         except Exception as exc:
@@ -630,24 +633,22 @@ def _iter_climbmix_tokens(split, dataset_name="climbmix"):
             continue
 
         column = table.column(col_name)
-        for row in column.to_pylist():
-            if isinstance(row, list):
-                yield row  # already token IDs
-            elif isinstance(row, str):
-                # Fallback: raw text that needs encoding
-                yield None  # signal to caller to encode
-            else:
-                continue
+        rows = [row for row in column.to_pylist() if isinstance(row, list)]
+        if shuffle_seed is not None:
+            rng = random.Random(shuffle_seed + shard_idx)
+            rng.shuffle(rows)
+        for row in rows:
+            yield row
 
 
 def _document_batches_climbmix(split, dataset_name="climbmix"):
     """Yield batches of pre-tokenized documents for ClimbMix."""
     epoch = 1
     while True:
+        # Shuffle train documents each epoch to avoid topic-clustered ordering
+        shuffle_seed = (epoch * 1000) if split == "train" else None
         batch = []
-        for tokens in _iter_climbmix_tokens(split, dataset_name):
-            if tokens is None:
-                continue
+        for tokens in _iter_climbmix_tokens(split, dataset_name, shuffle_seed=shuffle_seed):
             batch.append(tokens)
             if len(batch) >= 128:
                 yield batch, epoch
