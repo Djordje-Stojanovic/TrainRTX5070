@@ -130,16 +130,13 @@ Training takes ~25 min total (20 min training + ~5 min startup/compile/eval).
 
 Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 min.
 
-## Bottleneck Diagnosis (check BEFORE planning next experiment)
+## Bottleneck-First Rule
 
-After every experiment, check these metrics in order:
+**Every experiment must target the top bottleneck.** After each experiment, look at your metrics (VRAM, MFU, training stability, loss curve, val_bpb) and identify what is most limiting val_bpb right now. Your next experiment must directly target that bottleneck — not something easier or more familiar.
 
-1. **VRAM utilization**: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. Training VRAM is significantly higher. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. If training VRAM is well below 11.5GB, you have room for a bigger model.
-2. **MFU**: Target 30%+ on this RTX 5070. If below target, diagnose why — search the web for how to improve MFU at this scale.
-3. **Training stability**: If loss spikes or explodes, fix that before anything else. Search the web for current best practices with your optimizer.
-4. **Loss curve shape**: If loss plateaus early, model likely needs more capacity or different architecture, not hyperparameter tuning.
+Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`.
 
-**Fix bottlenecks in order. Never tune hyperparameters if training is unstable.**
+If you don't know how to fix the bottleneck, search the web first. Use any approach within the allowed changes — architecture, model size, optimizer, training loop, hyperparameters, or anything else listed as fair game.
 
 **Hypothesis protocol (mandatory):** Every commit message must include: `Bottleneck: [X]. Hypothesis: [Y] because [Z]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. After reverting a failed experiment, re-read train.py to confirm what state you're in — reverts undo ALL changes from that experiment, not just the one you're thinking about.
 

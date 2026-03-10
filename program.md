@@ -108,7 +108,7 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar10`).
 
 LOOP FOREVER:
 
-0. **Plan:** Read `results.tsv` (what's been tried), check bottleneck diagnosis in `CLAUDE.md` (VRAM→MFU→stability→capacity), then write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. **Every 5th experiment**, do a landscape scan across ALL search areas listed in `CLAUDE.md` — architecture, training, optimizer, hardware, memory, throughput, frontier techniques. Don't get tunnel-visioned on one area.
+0. **Plan:** Read `results.tsv` (what's been tried), then identify your top bottleneck (see Bottleneck-First Rule in `CLAUDE.md`). Your next experiment MUST target that bottleneck. Write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. **Every 5th experiment**, do a landscape scan across ALL search areas listed in `CLAUDE.md` — architecture, training, optimizer, hardware, memory, throughput, frontier techniques. Don't get tunnel-visioned on one area.
 1. `git pull origin autoresearch/mar10` — pick up any doc updates pushed between experiments.
 2. Make your experimental change (primarily `train.py`, but other files if needed per the rules in `CLAUDE.md`).
 3. git commit (with the hypothesis from step 0 in the message)
@@ -122,8 +122,6 @@ LOOP FOREVER:
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
 **Timeout**: Each experiment should take ~20 minutes total (+ a few minutes for startup/compilation and eval overhead). If a run exceeds 30 minutes, kill it and treat it as a failure (discard and revert).
-
-**Bottleneck escalation**: If you identify the same bottleneck 3 or more experiments in a row without attempting to fix it, your next experiment MUST directly target that bottleneck. Search the web for how to fix it, then try any approach that's within the allowed changes — architecture, model size, optimizer, training loop, hyperparameters, or anything else listed as fair game. Don't defer it again.
 
 **Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
 
