@@ -770,7 +770,7 @@ SCALAR_LR = 0.5
 WEIGHT_DECAY = 0.2
 ADAM_BETAS = (0.8, 0.95)
 WARMUP_RATIO = 0.05
-WARMDOWN_RATIO = 0.0
+WARMDOWN_RATIO = 0.4
 FINAL_LR_FRAC = 0.0
 
 # Model size + memory defaults
@@ -1089,6 +1089,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
             if group["kind"] == "muon":
                 group["momentum"] = muon_momentum
                 group["weight_decay"] = muon_weight_decay
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         model.zero_grad(set_to_none=True)
 
