@@ -146,6 +146,33 @@ This means ~5 checks per run, not 30+. Over a 10-hour session that's ~24 experim
 
 This preserves all docs, results history, and other work. The failed experiment stays visible in results.tsv and the progress chart.
 
+## When Stuck — Use Web Search
+
+If you've tried 2-3 experiments in the same direction and nothing works, **search the web.** You have tools for this. Use them.
+
+- Search for papers, blog posts, GitHub repos related to your problem
+- Examples: "Muon optimizer learning rate schedule", "SwiGLU warmdown instability", "efficient transformer training 12GB GPU"
+- Look at what nanochat leaderboard winners did: search "nanochat autoresearch improvements"
+- Check recent ML papers on arXiv for architecture or optimizer innovations
+- Read PyTorch docs for performance tips (fused kernels, memory-efficient ops)
+
+Don't waste 5 experiments guessing when a 10-second search could tell you the answer. Research first, then experiment.
+
+## Discarding Experiments — NEVER use git reset --hard
+
+When an experiment fails (val_bpb didn't improve), discard by reverting **only train.py**:
+
+```bash
+# CORRECT: revert only train.py to the pre-experiment state
+git checkout <pre-experiment-commit> -- train.py
+git commit -m "revert: undo <description>"
+
+# WRONG: DO NOT DO THIS — it destroys results.tsv, README, and other files
+git reset --hard <commit>
+```
+
+Always keep results.tsv, CLAUDE.md, README.md, and progress.png intact across discards.
+
 ## Tips for Good Experiments
 
 - Always run the baseline first before changing anything
