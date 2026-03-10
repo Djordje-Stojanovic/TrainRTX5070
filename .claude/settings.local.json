@@ -4,7 +4,11 @@
       "Bash(ls -la /c/AI/TrainRTX5070/ | grep -E \"\\\\.py$|^d\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('train.py'\\).read\\(\\)\\); print\\('train.py: OK'\\)\" && python -c \"import ast; ast.parse\\(open\\('prepare.py'\\).read\\(\\)\\); print\\('prepare.py: OK'\\)\")",
       "Bash(uv sync:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(tail -3 /c/AI/TrainRTX5070/run.log 2>/dev/null | tr '\\\\r' '\\\\n' | grep -v '^$' | tail -1)",
+      "Bash(find ~/.cache/autoresearch -type f -name \"*.parquet\" 2>/dev/null | head -20)",
+      "Bash(python3 << 'EOF'\nimport pyarrow.parquet as pq\nimport os\n\ndata_dir = \"C:\\\\\\\\Users\\\\\\\\djord\\\\\\\\AppData\\\\\\\\Local\\\\\\\\autoresearch\\\\\\\\datasets\\\\\\\\climbmix\\\\\\\\data\"\n\n# Just read metadata for one shard to see schema\npath = os.path.join\\(data_dir, \"shard_0.tokenized.parquet\"\\)\ntry:\n    pf = pq.ParquetFile\\(path\\)\n    print\\(\"Schema:\", pf.schema\\)\n    print\\(\"\\\\nMetadata:\", pf.metadata\\)\nexcept Exception as e:\n    print\\(f\"Error: {e}\"\\)\nEOF)",
+      "Bash(python3 << 'EOF'\nimport pyarrow.parquet as pq\nimport os\n\ndata_dir = r\"C:\\\\Users\\\\djord\\\\AppData\\\\Local\\\\autoresearch\\\\datasets\\\\climbmix\\\\data\"\n\n# Just read metadata for one shard to see schema\npath = os.path.join\\(data_dir, \"shard_0.tokenized.parquet\"\\)\ntry:\n    pf = pq.ParquetFile\\(path\\)\n    print\\(\"Schema:\", pf.schema\\)\n    print\\(\"\\\\nNum row groups:\", pf.num_row_groups\\)\n    print\\(\"Num rows:\", pf.metadata.num_rows\\)\nexcept Exception as e:\n    print\\(f\"Error: {e}\"\\)\n    import traceback\n    traceback.print_exc\\(\\)\nEOF)"
     ]
   }
 }
