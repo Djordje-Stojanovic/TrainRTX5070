@@ -112,7 +112,14 @@ After EVERY experiment (keep, discard, or crash):
 2. **Commit `results.tsv`** after every experiment — if the session dies, results are preserved.
 3. **Update `progress.png`** by running: `uv run plot_results.py --save` (silent, no GUI).
 
-**Description column MUST be specific and quantitative.** The description is how future sessions know what was already tried. Bad: "tweak hyperparams". Good: "WARMDOWN_RATIO 0.4→0.1". Bad: "try bigger model". Good: "DEPTH 12→14 (n_embd=896, ~220M params)". Always include the before→after values so the exact change is clear.
+**Description column MUST be specific, quantitative, and diagnostic.** The description is how future sessions know what was already tried AND why it failed or succeeded. Include three things: (1) what changed (before→after values), (2) what happened (key metrics), (3) why (the diagnostic insight).
+
+- Bad: "tweak hyperparams"
+- Bad: "WARMDOWN_RATIO 0.4→0.3" (missing what happened and why)
+- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD: loss still explodes 1.77→3.81 during cooldown, Muon momentum incompatible with LR decay"
+- Good: "DEPTH 12→14 (n_embd=896, ~220M): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
+
+This prevents future sessions from repeating a failed DIRECTION (not just a failed value). If warmdown is fundamentally broken with Muon, say so — don't just say "0.3 didn't work" because the next AI will try 0.2.
 
 **Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed experiment. If a direction was tried and failed, try a different direction.
 
