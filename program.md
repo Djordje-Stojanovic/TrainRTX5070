@@ -106,10 +106,10 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar10`).
 
 LOOP FOREVER:
 
-0. Before each experiment, check the bottleneck diagnosis protocol in `CLAUDE.md` and read `results.tsv` to see what was already tried.
-1. Look at the git state: the current branch/commit we're on
+0. **Plan:** Read `results.tsv` (what's been tried), check bottleneck diagnosis in `CLAUDE.md` (VRAM→MFU→stability→capacity), then write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first.
+1. `git pull origin autoresearch/mar10` — pick up any doc updates pushed between experiments.
 2. Make your experimental change (primarily `train.py`, but other files if needed per the rules in `CLAUDE.md`).
-3. git commit
+3. git commit (with the hypothesis from step 0 in the message)
 4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:\|^mfu_percent:" run.log`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
