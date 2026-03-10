@@ -774,7 +774,7 @@ WARMDOWN_RATIO = 0.3
 FINAL_LR_FRAC = 0.1
 
 # Model size + memory defaults
-DEPTH = 14
+DEPTH = 12
 DEVICE_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 8
 
