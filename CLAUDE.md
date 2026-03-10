@@ -1,5 +1,13 @@
 # CLAUDE.md — Project Context for AI Agents
 
+## MANDATORY: Follow the Guides
+
+**You MUST follow `program.md` exactly.** It defines the setup procedure, experiment loop, logging format, and operational rules. Do not skip steps, do not improvise the workflow. Read it first, follow it to the letter.
+
+- **Before your first run:** Complete ALL setup steps in program.md (run tag, branch, read files, verify data, initialize results.tsv, confirm with user).
+- **During experimentation:** Follow the experiment loop exactly (commit before run, log after run, keep/discard based on val_bpb, never stop).
+- **Fairness invariants** below are non-negotiable.
+
 ## What is this?
 
 Autonomous LLM pretraining research on a single RTX 5070 (12GB, Blackwell CC 12.0).

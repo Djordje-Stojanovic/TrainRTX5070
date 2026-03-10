@@ -41,9 +41,9 @@ SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
 BOS_TOKEN = "<|reserved_0|>"
 
 # ClimbMix constants
-CLIMBMIX_API_URL = "https://huggingface.co/api/datasets/nvidia/Nemotron-ClimbMix/parquet/default/train"
-CLIMBMIX_NUM_SHARDS = 10  # 10 parquet files available via HF API
-CLIMBMIX_DEFAULT_DOWNLOAD_SHARDS = 5  # 5 shards for training, keep some for val
+CLIMBMIX_HF_DATASET = "nvidia/Nemotron-ClimbMix"
+CLIMBMIX_TARGET_TOKENS = 3_000_000_000  # 3B tokens default
+CLIMBMIX_SHARD_TOKEN_TARGET = 20_000_000  # ~20M tokens per local shard (~30MB, low RAM)
 CLIMBMIX_GPT2_VOCAB_SIZE = 50257
 CLIMBMIX_GPT2_EOT_TOKEN = 50256  # <|endoftext|>
 
@@ -66,8 +66,7 @@ DATASET_CONFIGS = {
         "format": "raw_text",
     },
     "climbmix": {
-        "api_url": CLIMBMIX_API_URL,
-        "num_shards": CLIMBMIX_NUM_SHARDS,
+        "hf_dataset": CLIMBMIX_HF_DATASET,
         "format": "pretokenized",
     },
 }
@@ -235,47 +234,109 @@ def _climbmix_shard_path(shard_id, dataset_name="climbmix"):
     return os.path.join(data_dir, f"shard_{shard_id:05d}.parquet")
 
 
-def _download_climbmix_shards(dataset_name, num_shards=None):
-    if num_shards is None:
-        num_shards = CLIMBMIX_DEFAULT_DOWNLOAD_SHARDS
-    num_shards = min(num_shards, CLIMBMIX_NUM_SHARDS)
+def _count_existing_climbmix_tokens(dataset_name="climbmix"):
+    """Count tokens already downloaded in local shards."""
+    data_dir = _data_dir(dataset_name)
+    if not os.path.exists(data_dir):
+        return 0, 0
+    total_tokens = 0
+    num_shards = 0
+    for name in sorted(os.listdir(data_dir)):
+        if not name.startswith("shard_") or not name.endswith(".parquet"):
+            continue
+        path = os.path.join(data_dir, name)
+        try:
+            table = pq.read_table(path, columns=["token_count"])
+            total_tokens += sum(table.column("token_count").to_pylist())
+            num_shards += 1
+        except Exception:
+            continue
+    return total_tokens, num_shards
+
+
+def _download_climbmix_direct(dataset_name, target_tokens=None):
+    """Download ClimbMix parquet shards directly from HuggingFace (fast, parallel)."""
+    from huggingface_hub import hf_hub_download
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if target_tokens is None:
+        target_tokens = CLIMBMIX_TARGET_TOKENS
     data_dir = _data_dir(dataset_name)
     os.makedirs(data_dir, exist_ok=True)
 
-    downloaded = 0
-    skipped = 0
-    for shard_id in range(num_shards):
-        filepath = _climbmix_shard_path(shard_id, dataset_name)
-        if os.path.exists(filepath):
-            skipped += 1
+    existing_tokens, existing_shards = _count_existing_climbmix_tokens(dataset_name)
+    if existing_tokens >= target_tokens:
+        print(
+            f"Data: ClimbMix already has {existing_tokens/1e9:.1f}B tokens "
+            f"in {existing_shards} shards (target: {target_tokens/1e9:.1f}B)"
+        )
+        return
+
+    # Each HF shard has ~265M tokens, ~0.5GB. Figure out how many we need.
+    tokens_per_shard = 265_000_000
+    shards_needed = max(1, int((target_tokens - existing_tokens) / tokens_per_shard) + 1)
+    shards_needed = min(shards_needed, 100)  # max 100 shards available
+
+    # Find which HF shards we already have locally
+    existing_files = set()
+    if os.path.exists(data_dir):
+        existing_files = {n for n in os.listdir(data_dir) if n.endswith(".parquet")}
+
+    # HF shard naming: climbmix_small/shard_N.tokenized.parquet (N = 0..99)
+    to_download = []
+    for i in range(shards_needed):
+        hf_filename = f"shard_{i}.tokenized.parquet"
+        if hf_filename in existing_files:
             continue
-        # HF API parquet endpoint — follows redirects to actual CDN file
-        url = f"{CLIMBMIX_API_URL}/{shard_id}.parquet"
-        print(f"Data: downloading ClimbMix shard {shard_id}/{num_shards}...")
-        try:
-            response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.rename(temp_path, filepath)
-            downloaded += 1
-        except Exception as exc:
-            print(f"Warning: failed to download shard {shard_id}: {exc}")
-            if os.path.exists(filepath + ".tmp"):
-                os.remove(filepath + ".tmp")
-    if skipped > 0:
-        print(f"Data: {skipped} ClimbMix shards already downloaded")
-    if downloaded > 0:
-        print(f"Data: downloaded {downloaded} new ClimbMix shards to {data_dir}")
+        to_download.append(i)
+
+    if not to_download:
+        print(f"Data: all {shards_needed} shards already present locally.")
+        return
+
+    print(
+        f"Data: downloading {len(to_download)} ClimbMix shards "
+        f"(~{len(to_download) * 0.5:.1f}GB, ~{len(to_download) * tokens_per_shard / 1e9:.1f}B tokens) "
+        f"with 8 parallel workers..."
+    )
+
+    def _download_one(shard_idx):
+        hf_path = f"climbmix_small/shard_{shard_idx}.tokenized.parquet"
+        local_name = f"shard_{shard_idx}.tokenized.parquet"
+        local_path = os.path.join(data_dir, local_name)
+        if os.path.exists(local_path):
+            return shard_idx, 0
+        cached = hf_hub_download(
+            CLIMBMIX_HF_DATASET, hf_path, repo_type="dataset",
+        )
+        shutil.copy2(cached, local_path)
+        size_mb = os.path.getsize(local_path) / 1e6
+        return shard_idx, size_mb
+
+    completed = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_download_one, i): i for i in to_download}
+        for future in as_completed(futures):
+            shard_idx = futures[future]
+            try:
+                idx, size_mb = future.result()
+                completed += 1
+                print(f"  [{completed}/{len(to_download)}] shard_{idx}.tokenized.parquet ({size_mb:.0f}MB)")
+            except Exception as e:
+                print(f"  ERROR downloading shard {shard_idx}: {e}")
+
+    total_tokens, total_shards = _count_existing_climbmix_tokens(dataset_name)
+    print(
+        f"Data: done. {total_tokens/1e9:.2f}B tokens in {total_shards} shards "
+        f"at {data_dir}"
+    )
 
 
-def download_data(dataset_name):
+def download_data(dataset_name, target_tokens=None):
     dataset = _resolve_dataset_name(dataset_name)
     if dataset == "climbmix":
-        _download_climbmix_shards(dataset)
+        _download_climbmix_direct(dataset, target_tokens=target_tokens)
     else:
         _download_tinystories_file(dataset)
 
@@ -756,23 +817,31 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--num-shards",
-        type=int,
+        "--target-tokens",
+        type=str,
         default=None,
-        help="Number of ClimbMix shards to download (default: 10).",
+        help="Target token count for ClimbMix (e.g. '3B', '500M'). Default: 3B.",
     )
     args = parser.parse_args()
 
     dataset_name = _resolve_dataset_name(args.dataset)
 
+    # Parse target tokens
+    target_tokens = None
+    if args.target_tokens is not None:
+        t = args.target_tokens.strip().upper()
+        if t.endswith("B"):
+            target_tokens = int(float(t[:-1]) * 1_000_000_000)
+        elif t.endswith("M"):
+            target_tokens = int(float(t[:-1]) * 1_000_000)
+        else:
+            target_tokens = int(t)
+
     print(f"Cache directory: {CACHE_DIR}")
     print(f"Dataset: {dataset_name}")
     print()
 
-    if dataset_name == "climbmix" and args.num_shards is not None:
-        _download_climbmix_shards(dataset_name, num_shards=args.num_shards)
-    else:
-        download_data(dataset_name)
+    download_data(dataset_name, target_tokens=target_tokens)
     print()
     train_tokenizer(dataset_name)
     _set_active_dataset(dataset_name)

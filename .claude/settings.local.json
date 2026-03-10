@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/AI/TrainRTX5070/ | grep -E \"\\\\.py$|^d\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('train.py'\\).read\\(\\)\\); print\\('train.py: OK'\\)\" && python -c \"import ast; ast.parse\\(open\\('prepare.py'\\).read\\(\\)\\); print\\('prepare.py: OK'\\)\")",
+      "Bash(uv sync:*)",
+      "Bash(git branch:*)"
+    ]
+  }
+}
