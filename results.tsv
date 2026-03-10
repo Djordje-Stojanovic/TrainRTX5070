@@ -1,1 +1,2 @@
-commit	val_bpb	memory_gb	status	description
+commit	val_bpb	memory_gb	mfu	tok_per_sec	num_steps	num_params_M	batch_size	final_loss	status	description
+3087aeb	2.335670	3.7	23.9	37700	180	162.1	4	5.155	keep	baseline (SwiGLU d12 ClimbMix) — BROKEN cooldown: loss 1.50→5.15 during warmdown

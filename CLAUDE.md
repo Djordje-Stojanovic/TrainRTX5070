@@ -95,6 +95,29 @@ grep "^val_bpb:\|^peak_vram_mb:\|^mfu_percent:" run.log
 - **Autotune:** Automatically finds best batch_size + checkpointing combo
 - If OOM at all batch sizes, reduce model size or enable more aggressive checkpointing
 
+## Continuing a Run
+
+If you are dropped into this repo on an `autoresearch/*` branch with results already in `results.tsv`, **you are resuming an existing experiment loop.** Do NOT re-run setup. Just:
+
+1. Read `CLAUDE.md` and `program.md` for context.
+2. Read `results.tsv` to see what's been tried and the current best val_bpb.
+3. Read `train.py` and `prepare.py` for the current code state.
+4. Continue the experiment loop from where it left off.
+
+## Logging Protocol
+
+After EVERY experiment (keep, discard, or crash):
+
+1. **Append the result to `results.tsv`** (never skip this, even for crashes).
+2. **Commit `results.tsv`** after every experiment — if the session dies, results are preserved.
+3. **Update `progress.png`** by running: `uv run plot_results.py --save` (silent, no GUI).
+
+**Description column MUST be specific and quantitative.** The description is how future sessions know what was already tried. Bad: "tweak hyperparams". Good: "WARMDOWN_RATIO 0.4→0.1". Bad: "try bigger model". Good: "DEPTH 12→14 (n_embd=896, ~220M params)". Always include the before→after values so the exact change is clear.
+
+**Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed experiment. If a direction was tried and failed, try a different direction.
+
+This ensures the human can always see what happened, even if the AI session crashes mid-loop.
+
 ## Tips for Good Experiments
 
 - Always run the baseline first before changing anything

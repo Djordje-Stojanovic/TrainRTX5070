@@ -1,5 +1,5 @@
 """
-Plot experiment results from results.tsv.
+Plot experiment results from results.tsv (Karpathy-style progress chart).
 
 Usage:
     python plot_results.py              # show plot
@@ -12,6 +12,7 @@ import os
 import time
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -25,61 +26,81 @@ def load_results(path="results.tsv"):
 
 
 def plot(df, save_path=None):
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-    fig.suptitle("Autoresearch Experiment Progress", fontsize=14, fontweight="bold")
+    fig, ax = plt.subplots(figsize=(14, 7))
 
-    # Color by status
-    colors = {"keep": "#2ecc71", "discard": "#e74c3c", "crash": "#95a5a6"}
-    df["color"] = df["status"].map(colors).fillna("#3498db")
-
-    # Track the "best so far" line (cumulative min of kept experiments)
     kept = df[df["status"] == "keep"].copy()
+    discarded = df[df["status"].isin(["discard", "crash"])].copy()
+    num_kept = len(kept)
+
+    fig.suptitle(
+        f"Autoresearch Progress: {len(df)} Experiments, {num_kept} Kept Improvements",
+        fontsize=14, fontweight="bold",
+    )
+
+    # Plot discarded experiments as gray dots
+    if not discarded.empty:
+        valid_disc = discarded[discarded["val_bpb"] > 0]
+        if not valid_disc.empty:
+            ax.scatter(
+                valid_disc.index, valid_disc["val_bpb"],
+                c="#cccccc", s=30, zorder=2, alpha=0.6,
+                edgecolors="white", linewidth=0.3, label="Discarded",
+            )
+
+    # Plot kept experiments as green dots
     if not kept.empty:
         kept["best_so_far"] = kept["val_bpb"].cummin()
 
-    # 1. val_bpb over experiments
-    ax = axes[0, 0]
-    valid = df[df["val_bpb"] > 0]
-    ax.scatter(valid.index, valid["val_bpb"], c=valid["color"], s=40, zorder=3, edgecolors="white", linewidth=0.5)
+        ax.scatter(
+            kept.index, kept["val_bpb"],
+            c="#2ecc71", s=60, zorder=4, edgecolors="white", linewidth=0.5,
+            label="Kept",
+        )
+
+        # Running best step line
+        ax.step(
+            kept.index, kept["best_so_far"],
+            where="post", color="#2ecc71", linewidth=2, zorder=3,
+            label="Running best",
+        )
+
+        # Label each kept experiment with its description
+        for idx, row in kept.iterrows():
+            desc = str(row.get("description", ""))
+            # Truncate long descriptions
+            if len(desc) > 45:
+                desc = desc[:42] + "..."
+            ax.annotate(
+                desc,
+                xy=(idx, row["val_bpb"]),
+                xytext=(5, 5), textcoords="offset points",
+                fontsize=6.5, color="#333333", rotation=25,
+                ha="left", va="bottom",
+            )
+
+    ax.set_xlabel("Experiment #", fontsize=12)
+    ax.set_ylabel("Validation BPB (lower is better)", fontsize=12)
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(True, alpha=0.2)
+
+    # Add summary stats as text box
     if not kept.empty:
-        ax.step(kept.index, kept["best_so_far"], where="post", color="#2c3e50", linewidth=2, label="best (kept)")
-        ax.legend(fontsize=8)
-    ax.set_xlabel("Experiment #")
-    ax.set_ylabel("val_bpb")
-    ax.set_title("Validation BPB (lower is better)")
-    ax.grid(True, alpha=0.3)
-
-    # 2. Memory usage
-    ax = axes[0, 1]
-    valid_mem = df[df["memory_gb"] > 0]
-    ax.bar(valid_mem.index, valid_mem["memory_gb"], color=valid_mem["color"], alpha=0.7, edgecolor="white")
-    ax.axhline(y=12.0, color="red", linestyle="--", alpha=0.5, label="12GB VRAM limit")
-    ax.set_xlabel("Experiment #")
-    ax.set_ylabel("Peak VRAM (GB)")
-    ax.set_title("Memory Usage")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
-
-    # 3. Status distribution
-    ax = axes[1, 0]
-    status_counts = df["status"].value_counts()
-    pie_colors = [colors.get(s, "#3498db") for s in status_counts.index]
-    ax.pie(status_counts, labels=status_counts.index, colors=pie_colors, autopct="%1.0f%%", startangle=90)
-    ax.set_title(f"Outcomes ({len(df)} experiments)")
-
-    # 4. Improvement timeline
-    ax = axes[1, 1]
-    if not kept.empty and len(kept) > 1:
-        improvements = kept["best_so_far"].diff().dropna()
-        imp_idx = improvements[improvements < 0]
-        ax.bar(imp_idx.index, -imp_idx, color="#2ecc71", alpha=0.8, edgecolor="white")
-        ax.set_xlabel("Experiment #")
-        ax.set_ylabel("BPB improvement")
-        ax.set_title("Improvements (when best updated)")
-        ax.grid(True, alpha=0.3)
-    else:
-        ax.text(0.5, 0.5, "Need 2+ kept\nexperiments", ha="center", va="center", fontsize=12, color="#95a5a6")
-        ax.set_title("Improvements")
+        best_bpb = kept["val_bpb"].min()
+        best_row = kept.loc[kept["val_bpb"].idxmin()]
+        stats_lines = [f"Best: {best_bpb:.6f}"]
+        if "mfu" in df.columns and pd.notna(best_row.get("mfu")):
+            stats_lines.append(f"MFU: {best_row['mfu']:.1f}%")
+        if "tok_per_sec" in df.columns and pd.notna(best_row.get("tok_per_sec")):
+            stats_lines.append(f"Throughput: {best_row['tok_per_sec']:.0f} tok/s")
+        if "memory_gb" in df.columns and pd.notna(best_row.get("memory_gb")):
+            stats_lines.append(f"VRAM: {best_row['memory_gb']:.1f}/12.0 GB")
+        stats_text = "\n".join(stats_lines)
+        ax.text(
+            0.02, 0.02, stats_text,
+            transform=ax.transAxes, fontsize=9,
+            verticalalignment="bottom", fontfamily="monospace",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8, edgecolor="#cccccc"),
+        )
 
     plt.tight_layout()
 
@@ -105,9 +126,13 @@ def main():
                 plt.clf()
                 plot(df, save_path="progress.png" if args.save else None)
                 plt.pause(0.1)
-                print(f"\r[{time.strftime('%H:%M:%S')}] {len(df)} experiments, "
-                      f"best={df[df['status']=='keep']['val_bpb'].min():.6f}" if not df[df['status']=='keep'].empty else "",
-                      end="", flush=True)
+                kept = df[df["status"] == "keep"]
+                if not kept.empty:
+                    print(
+                        f"\r[{time.strftime('%H:%M:%S')}] {len(df)} experiments, "
+                        f"best={kept['val_bpb'].min():.6f}",
+                        end="", flush=True,
+                    )
             time.sleep(60)
     else:
         df = load_results(args.file)
