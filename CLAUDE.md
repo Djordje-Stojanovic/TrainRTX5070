@@ -151,10 +151,12 @@ This preserves all docs, results history, and other work. The failed experiment 
 If you've tried 2-3 experiments in the same direction and nothing works, **search the web.** You have tools for this. Use them.
 
 - Search for papers, blog posts, GitHub repos related to your problem
-- Examples: "Muon optimizer learning rate schedule", "SwiGLU warmdown instability", "efficient transformer training 12GB GPU"
+- Examples: "Muon optimizer learning rate schedule 2025", "SwiGLU warmdown instability", "efficient transformer training 12GB GPU 2026"
 - Look at what nanochat leaderboard winners did: search "nanochat autoresearch improvements"
 - Check recent ML papers on arXiv for architecture or optimizer innovations
 - Read PyTorch docs for performance tips (fused kernels, memory-efficient ops)
+
+**Always search for current SOTA (2025-2026).** Add the year to your searches. ML moves fast — a technique from 2023 may already be obsolete. Verify that any approach you find is still considered best practice as of 2026. Don't use deprecated APIs, abandoned libraries, or outdated architectures.
 
 Don't waste 5 experiments guessing when a 10-second search could tell you the answer. Research first, then experiment.
 
