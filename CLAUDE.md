@@ -132,11 +132,13 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 ## Bottleneck-First Rule
 
-**Every experiment must target the top bottleneck.** After each experiment, look at your metrics (VRAM, MFU, training stability, loss curve, val_bpb) and identify what is most limiting val_bpb right now. Your next experiment must directly target that bottleneck — not something easier or more familiar.
+**Every experiment must target the top structural bottleneck.** A bottleneck is a metric significantly below its potential — GPU utilization (MFU), VRAM usage, training stability, loss curve shape. These are structural problems that require structural fixes (architecture changes, memory optimization, training loop improvements, etc.).
+
+Adjusting a hyperparameter value (learning rate, weight decay, warmup ratio, batch size) is **tuning**, not bottleneck fixing. Only tune hyperparameters when no structural bottleneck remains. If a structural metric is clearly underperforming, fix that first.
 
 Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`.
 
-If you don't know how to fix the bottleneck, search the web first. Use any approach within the allowed changes — architecture, model size, optimizer, training loop, hyperparameters, or anything else listed as fair game.
+If you don't know how to fix a bottleneck, search the web first. Use any approach within the allowed changes — architecture, model size, optimizer, training loop, or anything else listed as fair game.
 
 **Hypothesis protocol (mandatory):** Every commit message must include: `Bottleneck: [X]. Hypothesis: [Y] because [Z]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. After reverting a failed experiment, re-read train.py to confirm what state you're in — reverts undo ALL changes from that experiment, not just the one you're thinking about.
 

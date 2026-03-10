@@ -108,7 +108,7 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar10`).
 
 LOOP FOREVER:
 
-0. **Plan:** Read `results.tsv` (what's been tried), then identify your top bottleneck (see Bottleneck-First Rule in `CLAUDE.md`). Your next experiment MUST target that bottleneck. Write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. **Every 5th experiment**, do a landscape scan across ALL search areas listed in `CLAUDE.md` — architecture, training, optimizer, hardware, memory, throughput, frontier techniques. Don't get tunnel-visioned on one area.
+0. **Plan:** Read `results.tsv` (what's been tried), then identify your top structural bottleneck (see Bottleneck-First Rule in `CLAUDE.md`). A bottleneck is a metric far below its potential — not an untried hyperparameter. Fix structural problems before tuning. Your next experiment MUST target that bottleneck. Write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. **Every 5th experiment**, do a landscape scan across ALL search areas listed in `CLAUDE.md` — architecture, training, optimizer, hardware, memory, throughput, frontier techniques. Don't get tunnel-visioned on one area.
 1. `git pull origin autoresearch/mar10` — pick up any doc updates pushed between experiments.
 2. Make your experimental change (primarily `train.py`, but other files if needed per the rules in `CLAUDE.md`).
 3. git commit (with the hypothesis from step 0 in the message)
