@@ -106,6 +106,7 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar10`).
 
 LOOP FOREVER:
 
+0. Before each experiment, check the bottleneck diagnosis protocol in `CLAUDE.md` and read `results.tsv` to see what was already tried.
 1. Look at the git state: the current branch/commit we're on
 2. Make your experimental change (primarily `train.py`, but other files if needed per the rules in `CLAUDE.md`).
 3. git commit
