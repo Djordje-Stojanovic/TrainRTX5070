@@ -133,14 +133,14 @@ Training takes ~25 min total (20 min training + ~5 min startup/compile/eval). **
 
 **Protocol:**
 1. Run training in background: `uv run train.py > run.log 2>&1` (use `run_in_background`)
-2. **`sleep 300`** (5 min) — use bash `sleep`, with `timeout: 360000`
+2. **`sleep 300`** (5 min) — use bash `sleep`, with `timeout: 310000`
 3. Check: `grep "^val_bpb:" run.log 2>/dev/null || echo "NOT DONE"`
 4. If not done, **`sleep 300`** again. Repeat until done.
 5. When done, extract all metrics with one grep.
 
 This means ~5 checks per run, not 30+. Over a 10-hour session that's ~24 experiments × 5 checks = 120 tool calls for waiting, instead of 24 × 30 = 720.
 
-**Calibrate sleep to run duration:** If you notice runs finish in ~22 min, sleep for the first 15 min (`sleep 900` with `timeout: 600000`), then check every 5 min. Always round down — better to sleep a bit less than miss completion by 1 second.
+**Calibrate sleep to run duration:** If you notice runs finish in ~22 min, sleep for the first 15 min (`sleep 900` with `timeout: 910000`), then check every 5 min. Always round down — better to sleep a bit less than miss completion by 1 second.
 
 ## Discarding Failed Experiments (CRITICAL)
 
