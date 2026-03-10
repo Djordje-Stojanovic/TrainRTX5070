@@ -1,12 +1,38 @@
 # CLAUDE.md — Project Context for AI Agents
 
-## MANDATORY: Follow the Guides
+## MANDATORY RULES (read these FIRST, violating ANY is a critical bug)
 
-**You MUST follow `program.md` exactly.** It defines the setup procedure, experiment loop, logging format, and operational rules. Do not skip steps, do not improvise the workflow. Read it first, follow it to the letter.
+1. **NEVER `git reset --hard`** — to discard, revert only train.py: `git checkout <commit> -- train.py`
+2. **NEVER poll training** — use `sleep 300` (timeout: 310000) between checks, max 5 checks per run
+3. **ALWAYS follow the post-experiment checklist** (below) — no exceptions, no skipping steps
+4. **ALWAYS push after every experiment** — `git push origin autoresearch/mar10`
+5. **NEVER stop the loop** — run experiments forever until manually interrupted
+6. **NEVER change fairness invariants** — TIME_BUDGET, MAX_SEQ_LEN, evaluate_bpb(), dataset/tokenizer
 
-- **Before your first run:** Complete ALL setup steps in program.md (run tag, branch, read files, verify data, initialize results.tsv, confirm with user).
-- **During experimentation:** Follow the experiment loop exactly (commit before run, log after run, keep/discard based on val_bpb, never stop).
-- **Fairness invariants** below are non-negotiable.
+## Post-Experiment Checklist (execute EVERY time, in order)
+
+```
+# 1. Log result to results.tsv (even for crashes)
+echo -e "<commit>\t<val_bpb>\t<mem_gb>\t<mfu>\t<tok_sec>\t<steps>\t<params_M>\t<batch>\t<final_loss>\t<status>\t<description>" >> results.tsv
+
+# 2. Commit results
+git add results.tsv && git commit -m "results: <status> <short description>"
+
+# 3. Update chart
+uv run plot_results.py --save
+git add progress.png && git commit -m "chart: update progress.png"
+
+# 4. If DISCARD: revert only train.py to pre-experiment state
+git checkout <pre-experiment-commit> -- train.py
+git commit -m "revert: undo <description>"
+
+# 5. Push everything
+git push origin autoresearch/mar10
+```
+
+**Description column MUST be diagnostic.** Include: (1) what changed with values, (2) what happened, (3) WHY it failed/succeeded.
+- Bad: "WARMDOWN_RATIO 0.4→0.3"
+- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD: loss still explodes 1.77→3.81, proves instability is NOT warmdown-related"
 
 ## What is this?
 
@@ -59,16 +85,6 @@ results.tsv     — Experiment log (created during runs).
 - Adding a package is allowed if it enables a real optimization (e.g., a fused kernel)
 - Do not add packages speculatively
 
-## What You Must Not Change
-
-These are the **fairness invariants** that make experiments comparable:
-
-1. **`TIME_BUDGET = 1200`** (20 minutes) — the fixed training wall clock
-2. **`MAX_SEQ_LEN = 2048`** — context length
-3. **`evaluate_bpb()`** — the metric definition (nats per byte -> bits per byte)
-4. **Dataset/tokenizer identity** — ClimbMix with GPT-2 tokenizer
-5. **Evaluation data** — the val split must remain untouched
-
 ## Commands
 
 ```bash
@@ -104,32 +120,9 @@ If you are dropped into this repo on an `autoresearch/*` branch with results alr
 3. Read `train.py` and `prepare.py` for the current code state.
 4. Continue the experiment loop from where it left off.
 
-## Logging Protocol
+## Waiting for Training Runs (save context tokens)
 
-After EVERY experiment (keep, discard, or crash):
-
-1. **Append the result to `results.tsv`** (never skip this, even for crashes).
-2. **Commit `results.tsv`** after every experiment — if the session dies, results are preserved.
-3. **Update `progress.png`** by running: `uv run plot_results.py --save` (silent, no GUI).
-
-**Description column MUST be specific, quantitative, and diagnostic.** The description is how future sessions know what was already tried AND why it failed or succeeded. Include three things: (1) what changed (before→after values), (2) what happened (key metrics), (3) why (the diagnostic insight).
-
-- Bad: "tweak hyperparams"
-- Bad: "WARMDOWN_RATIO 0.4→0.3" (missing what happened and why)
-- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD: loss still explodes 1.77→3.81 during cooldown, Muon momentum incompatible with LR decay"
-- Good: "DEPTH 12→14 (n_embd=896, ~220M): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
-
-This prevents future sessions from repeating a failed DIRECTION (not just a failed value). If warmdown is fundamentally broken with Muon, say so — don't just say "0.3 didn't work" because the next AI will try 0.2.
-
-**Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed experiment. If a direction was tried and failed, try a different direction.
-
-**Push to GitHub after every experiment** so progress is visible remotely: `git push origin autoresearch/mar10`.
-
-This ensures the human can always see what happened, even if the AI session crashes mid-loop.
-
-## Waiting for Training Runs (IMPORTANT — save context tokens)
-
-Training takes ~25 min total (20 min training + ~5 min startup/compile/eval). **You MUST NOT poll progress repeatedly.** Every tool call wastes context tokens and shortens your session. The goal is to maximize experiments per session (target: 10+ hours overnight).
+Training takes ~25 min total (20 min training + ~5 min startup/compile/eval).
 
 **Protocol:**
 1. Run training in background: `uv run train.py > run.log 2>&1` (use `run_in_background`)
@@ -138,49 +131,17 @@ Training takes ~25 min total (20 min training + ~5 min startup/compile/eval). **
 4. If not done, **`sleep 300`** again. Repeat until done.
 5. When done, extract all metrics with one grep.
 
-This means ~5 checks per run, not 30+. Over a 10-hour session that's ~24 experiments × 5 checks = 120 tool calls for waiting, instead of 24 × 30 = 720.
-
-**Calibrate sleep to run duration:** If you notice runs finish in ~22 min, sleep for the first 15 min (`sleep 900` with `timeout: 910000`), then check every 5 min. Always round down — better to sleep a bit less than miss completion by 1 second.
-
-## Discarding Failed Experiments (CRITICAL)
-
-**NEVER use `git reset --hard` to discard an experiment.** It destroys results.tsv entries, README changes, and other non-experiment files.
-
-**Safe discard procedure:**
-1. Append result to `results.tsv` and commit it.
-2. Revert **only `train.py`** (and any other files you changed for the experiment): `git checkout <pre-experiment-commit> -- train.py`
-3. Commit the revert.
-
-This preserves all docs, results history, and other work. The failed experiment stays visible in results.tsv and the progress chart.
+Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 min.
 
 ## When Stuck — Use Web Search
 
-If you've tried 2-3 experiments in the same direction and nothing works, **search the web.** You have tools for this. Use them.
+If you've tried 2-3 experiments in the same direction and nothing works, **search the web.**
 
-- Search for papers, blog posts, GitHub repos related to your problem
-- Examples: "Muon optimizer learning rate schedule 2025", "SwiGLU warmdown instability", "efficient transformer training 12GB GPU 2026"
-- Look at what nanochat leaderboard winners did: search "nanochat autoresearch improvements"
-- Check recent ML papers on arXiv for architecture or optimizer innovations
-- Read PyTorch docs for performance tips (fused kernels, memory-efficient ops)
+- Examples: "Muon optimizer learning rate schedule 2025", "efficient transformer training 12GB GPU 2026"
+- Look at nanochat leaderboard winners: search "nanochat autoresearch improvements"
+- **Always search for current SOTA (2025-2026).** Add the year to searches.
 
-**Always search for current SOTA (2025-2026).** Add the year to your searches. ML moves fast — a technique from 2023 may already be obsolete. Verify that any approach you find is still considered best practice as of 2026. Don't use deprecated APIs, abandoned libraries, or outdated architectures.
-
-Don't waste 5 experiments guessing when a 10-second search could tell you the answer. Research first, then experiment.
-
-## Discarding Experiments — NEVER use git reset --hard
-
-When an experiment fails (val_bpb didn't improve), discard by reverting **only train.py**:
-
-```bash
-# CORRECT: revert only train.py to the pre-experiment state
-git checkout <pre-experiment-commit> -- train.py
-git commit -m "revert: undo <description>"
-
-# WRONG: DO NOT DO THIS — it destroys results.tsv, README, and other files
-git reset --hard <commit>
-```
-
-Always keep results.tsv, CLAUDE.md, README.md, and progress.png intact across discards.
+Don't waste 5 experiments guessing when a 10-second search could tell you the answer.
 
 ## Tips for Good Experiments
 
