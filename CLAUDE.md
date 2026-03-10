@@ -145,26 +145,36 @@ After every experiment, check these metrics in order:
 
 ## Web Search — Your Most Powerful Tool
 
-Don't just search when stuck. **Search proactively.** The field moves monthly.
+Don't just search when stuck. **Search proactively.** The field moves monthly. Today's date is March 2026.
 
 **When to search:**
 - Before your first experiment each session
-- Every 5th experiment: "landscape scan" across ALL areas below
+- Every 5th experiment: "landscape scan" — pick 2-3 areas you haven't searched recently
 - After 2-3 failures in the same direction
-- Before any major architectural change
-- Whenever MFU, VRAM, or val_bpb plateaus
+- Before any major change to a component you haven't researched yet
+- Whenever a metric (MFU, VRAM, val_bpb) plateaus
 
-**What to search — rotate across ALL of these areas:**
-- Architecture: `"efficient transformer architecture 2026"`, `"linear attention vs softmax 2026"`, `"DeltaNet GLA transformer"`, `"mixture of experts small model"`
-- Training: `"LLM pretraining best practices 2026"`, `"learning rate schedule cosine vs wsd 2026"`, `"batch size scaling laws"`
-- Optimizer: `"Muon optimizer improvements 2026"`, `"8-bit Adam bitsandbytes training"`, `"optimizer state memory reduction"`
-- Hardware: `"Blackwell RTX FP8 training PyTorch"`, `"triton kernel fused MLP attention"`, `"torch.compile optimization 2026"`
-- Memory: `"reduce training VRAM usage 2026"`, `"activation checkpointing vs recomputation"`, `"gradient accumulation alternatives"`
-- Throughput: `"improve MFU transformer training"`, `"fused kernels transformer throughput"`, `"CUDA graph PyTorch training"`
-- Leaderboard: `"modded-nanogpt record"`, `"nanochat autoresearch improvements"`, `"nanochat leaderboard"`
-- Frontier: `"multi-token prediction training 2026"`, `"byte latent transformer"`, `"sparse attention patterns 2026"`
+**Search areas** (rotate through ALL of these over time — don't fixate on one):
+1. **Architecture** — what's the current best architecture at this scale?
+2. **Optimizer** — what's the current best optimizer and schedule?
+3. **Memory efficiency** — how do SOTA models minimize VRAM per parameter?
+4. **Throughput / MFU** — how do SOTA models maximize useful compute?
+5. **Hardware-specific** — what does our GPU (Blackwell/CC 12.0) support that we're not using?
+6. **Training techniques** — what training tricks are current SOTA models using?
+7. **Leaderboard** — what are nanochat/modded-nanogpt leaders doing differently?
+8. **Frontier** — what new techniques appeared in the last 3 months?
 
-**Always add the current year (2026) to searches.** A 2023 technique may be obsolete. Read actual papers and code, not blog summaries.
+**How to search** (templates, not fixed strings):
+- `"best [area] for small LLM training 2026"` — discover what's current
+- `"[our current choice] vs alternatives 2026"` — question every assumption
+- `"state of the art [area] March 2026"` — find what just changed
+- `"nanochat autoresearch improvements"` — see what other agents found
+
+**Rules:**
+- Always add the current year. A 2023 technique may be obsolete.
+- Never repeat the same search string twice across experiments — vary your queries.
+- Read actual papers and code, not blog summaries.
+- Question everything in train.py: is each component still SOTA, or was it SOTA in 2025?
 
 ## Context Window Management
 
