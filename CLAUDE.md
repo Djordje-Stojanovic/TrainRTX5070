@@ -135,6 +135,17 @@ This means ~5 checks per run, not 30+. Over a 10-hour session that's ~24 experim
 
 **Calibrate sleep to run duration:** If you notice runs finish in ~22 min, sleep for the first 15 min (`sleep 900` with `timeout: 600000`), then check every 5 min. Always round down — better to sleep a bit less than miss completion by 1 second.
 
+## Discarding Failed Experiments (CRITICAL)
+
+**NEVER use `git reset --hard` to discard an experiment.** It destroys results.tsv entries, README changes, and other non-experiment files.
+
+**Safe discard procedure:**
+1. Append result to `results.tsv` and commit it.
+2. Revert **only `train.py`** (and any other files you changed for the experiment): `git checkout <pre-experiment-commit> -- train.py`
+3. Commit the revert.
+
+This preserves all docs, results history, and other work. The failed experiment stays visible in results.tsv and the progress chart.
+
 ## Tips for Good Experiments
 
 - Always run the baseline first before changing anything
