@@ -8,7 +8,25 @@
 
 *AI agent runs experiments autonomously: modify code, train for 20 minutes, check if val_bpb improved, keep or discard, repeat. You sleep, it researches.*
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+## Start the AI agent
+
+```
+Read program.md and CLAUDE.md. Continue the experiment loop on the autoresearch/mar10 branch. The baseline is already recorded in results.tsv. Start experimenting.
+```
+
+Paste this into Claude Code (with bypass permissions on). Then monitor:
+
+```powershell
+# Live training progress (updates every ~7 seconds)
+Get-Content run.log -Tail 3 -Wait
+
+# Experiment results (updates every ~25 minutes)
+Get-Content results.tsv -Tail 10 -Wait
+```
+
+## About
+
+Based on [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 20 minutes, checks if the result improved, keeps or discards, and repeats. You wake up to a log of experiments and (hopefully) a better model.
 
 ## Fork scope
 
@@ -26,7 +44,7 @@ The repo is deliberately kept small and only really has a three files that matte
 - **`train.py`** — the single file the agent edits. Contains the full GPT model (SwiGLU MLP, RoPE, d12 ~162M params), optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+By design, training runs for a **fixed 20-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
 ## Quick start (PowerShell)
 
