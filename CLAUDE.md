@@ -143,18 +143,28 @@ After every experiment, check these metrics in order:
 
 **Hypothesis protocol (mandatory):** Every commit message must include: `Bottleneck: [X]. Hypothesis: [Y] because [Z]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. After reverting a failed experiment, re-read train.py to confirm what state you're in — reverts undo ALL changes from that experiment, not just the one you're thinking about.
 
-## When Stuck — Use Web Search
+## Web Search — Your Most Powerful Tool
 
-If you've tried 2-3 experiments in the same direction and nothing works, **search the web.**
+Don't just search when stuck. **Search proactively.** The field moves monthly.
 
-- Examples: "Muon optimizer learning rate schedule 2025", "efficient transformer training 12GB GPU 2026"
-- Look at nanochat leaderboard winners: search "nanochat autoresearch improvements"
-- For proven techniques at this scale: "modded-nanogpt record", "nanochat leaderboard"
-- For specific problems: "[problem] [optimizer] [year]"
-- **Always search for current SOTA (2025-2026).** Add the year to searches.
-- **Every 5th experiment:** do a "landscape scan" search to find techniques you haven't considered.
+**When to search:**
+- Before your first experiment each session
+- Every 5th experiment: "landscape scan" across ALL areas below
+- After 2-3 failures in the same direction
+- Before any major architectural change
+- Whenever MFU, VRAM, or val_bpb plateaus
 
-Don't waste 5 experiments guessing when a 10-second search could tell you the answer.
+**What to search — rotate across ALL of these areas:**
+- Architecture: `"efficient transformer architecture 2026"`, `"linear attention vs softmax 2026"`, `"DeltaNet GLA transformer"`, `"mixture of experts small model"`
+- Training: `"LLM pretraining best practices 2026"`, `"learning rate schedule cosine vs wsd 2026"`, `"batch size scaling laws"`
+- Optimizer: `"Muon optimizer improvements 2026"`, `"8-bit Adam bitsandbytes training"`, `"optimizer state memory reduction"`
+- Hardware: `"Blackwell RTX FP8 training PyTorch"`, `"triton kernel fused MLP attention"`, `"torch.compile optimization 2026"`
+- Memory: `"reduce training VRAM usage 2026"`, `"activation checkpointing vs recomputation"`, `"gradient accumulation alternatives"`
+- Throughput: `"improve MFU transformer training"`, `"fused kernels transformer throughput"`, `"CUDA graph PyTorch training"`
+- Leaderboard: `"modded-nanogpt record"`, `"nanochat autoresearch improvements"`, `"nanochat leaderboard"`
+- Frontier: `"multi-token prediction training 2026"`, `"byte latent transformer"`, `"sparse attention patterns 2026"`
+
+**Always add the current year (2026) to searches.** A 2023 technique may be obsolete. Read actual papers and code, not blog summaries.
 
 ## Context Window Management
 

@@ -106,7 +106,7 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar10`).
 
 LOOP FOREVER:
 
-0. **Plan:** Read `results.tsv` (what's been tried), check bottleneck diagnosis in `CLAUDE.md` (VRAM→MFU→stability→capacity), then write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first.
+0. **Plan:** Read `results.tsv` (what's been tried), check bottleneck diagnosis in `CLAUDE.md` (VRAM→MFU→stability→capacity), then write your commit message with: `Bottleneck: [what's limiting val_bpb]. Hypothesis: [change] will improve because [reason]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. **Every 5th experiment**, do a landscape scan across ALL search areas listed in `CLAUDE.md` — architecture, training, optimizer, hardware, memory, throughput, frontier techniques. Don't get tunnel-visioned on one area.
 1. `git pull origin autoresearch/mar10` — pick up any doc updates pushed between experiments.
 2. Make your experimental change (primarily `train.py`, but other files if needed per the rules in `CLAUDE.md`).
 3. git commit (with the hypothesis from step 0 in the message)
