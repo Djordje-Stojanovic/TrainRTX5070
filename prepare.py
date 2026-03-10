@@ -1,9 +1,11 @@
 """
 One-time data preparation for autoresearch experiments.
-Downloads data and trains a BPE tokenizer.
+Downloads data and trains/loads a tokenizer.
 
 Usage:
     python prepare.py
+    python prepare.py --dataset climbmix
+    python prepare.py --dataset tinystories
 
 Data and tokenizer are stored in the cache directory (overridable with
 AUTORESEARCH_CACHE_DIR). The active dataset can be pinned with
@@ -28,9 +30,9 @@ import torch
 # ---------------------------------------------------------------------------
 
 MAX_SEQ_LEN = 2048          # context length
-TIME_BUDGET = 300           # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288   # number of tokens for validation eval
-VOCAB_SIZE = 8192
+TIME_BUDGET = 1200          # training time budget in seconds (20 minutes)
+EVAL_TOKENS = 20 * 524288   # number of tokens for validation eval
+VOCAB_SIZE = 8192           # TinyStories vocab size (ClimbMix uses GPT-2: 50257)
 
 # BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -38,12 +40,37 @@ SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| 
 SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
 BOS_TOKEN = "<|reserved_0|>"
 
+# ClimbMix constants
+CLIMBMIX_API_URL = "https://huggingface.co/api/datasets/nvidia/Nemotron-ClimbMix/parquet/default/train"
+CLIMBMIX_NUM_SHARDS = 10  # 10 parquet files available via HF API
+CLIMBMIX_DEFAULT_DOWNLOAD_SHARDS = 5  # 5 shards for training, keep some for val
+CLIMBMIX_GPT2_VOCAB_SIZE = 50257
+CLIMBMIX_GPT2_EOT_TOKEN = 50256  # <|endoftext|>
+
 # ---------------------------------------------------------------------------
 # Dataset + cache configuration
 # ---------------------------------------------------------------------------
 
-DEFAULT_DATASET = "tinystories"
-DATASET_CHOICES = ("tinystories",)
+DEFAULT_DATASET = "climbmix"
+DATASET_CHOICES = ("tinystories", "climbmix")
+
+DATASET_CONFIGS = {
+    "tinystories": {
+        "filename": "tinystories_gpt4_clean.parquet",
+        "url": "https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean/resolve/main/tinystories_gpt4_clean.parquet",
+        "splits": {
+            "test": (0, 10_000),
+            "val": (10_000, 20_000),
+            "train": (20_000, None),
+        },
+        "format": "raw_text",
+    },
+    "climbmix": {
+        "api_url": CLIMBMIX_API_URL,
+        "num_shards": CLIMBMIX_NUM_SHARDS,
+        "format": "pretokenized",
+    },
+}
 
 
 def _default_cache_dir():
@@ -67,18 +94,6 @@ def _default_cache_dir():
 CACHE_DIR = _default_cache_dir()
 DATASETS_DIR = os.path.join(CACHE_DIR, "datasets")
 ACTIVE_DATASET_PATH = os.path.join(CACHE_DIR, "active_dataset.txt")
-
-DATASET_CONFIGS = {
-    "tinystories": {
-        "filename": "tinystories_gpt4_clean.parquet",
-        "url": "https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean/resolve/main/tinystories_gpt4_clean.parquet",
-        "splits": {
-            "test": (0, 10_000),
-            "val": (10_000, 20_000),
-            "train": (20_000, None),
-        },
-    },
-}
 
 
 def _normalize_dataset_name(dataset_name):
@@ -186,7 +201,7 @@ def _resolve_tiny_parquet_for_read(dataset_name=None):
 
 
 # ---------------------------------------------------------------------------
-# Data download (TinyStories only)
+# Data download
 # ---------------------------------------------------------------------------
 
 
@@ -215,13 +230,58 @@ def _download_tinystories_file(dataset_name):
     print(f"Data: downloaded {filename} to {filepath}")
 
 
+def _climbmix_shard_path(shard_id, dataset_name="climbmix"):
+    data_dir = _data_dir(dataset_name)
+    return os.path.join(data_dir, f"shard_{shard_id:05d}.parquet")
+
+
+def _download_climbmix_shards(dataset_name, num_shards=None):
+    if num_shards is None:
+        num_shards = CLIMBMIX_DEFAULT_DOWNLOAD_SHARDS
+    num_shards = min(num_shards, CLIMBMIX_NUM_SHARDS)
+    data_dir = _data_dir(dataset_name)
+    os.makedirs(data_dir, exist_ok=True)
+
+    downloaded = 0
+    skipped = 0
+    for shard_id in range(num_shards):
+        filepath = _climbmix_shard_path(shard_id, dataset_name)
+        if os.path.exists(filepath):
+            skipped += 1
+            continue
+        # HF API parquet endpoint — follows redirects to actual CDN file
+        url = f"{CLIMBMIX_API_URL}/{shard_id}.parquet"
+        print(f"Data: downloading ClimbMix shard {shard_id}/{num_shards}...")
+        try:
+            response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
+            response.raise_for_status()
+            temp_path = filepath + ".tmp"
+            with open(temp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+            os.rename(temp_path, filepath)
+            downloaded += 1
+        except Exception as exc:
+            print(f"Warning: failed to download shard {shard_id}: {exc}")
+            if os.path.exists(filepath + ".tmp"):
+                os.remove(filepath + ".tmp")
+    if skipped > 0:
+        print(f"Data: {skipped} ClimbMix shards already downloaded")
+    if downloaded > 0:
+        print(f"Data: downloaded {downloaded} new ClimbMix shards to {data_dir}")
+
+
 def download_data(dataset_name):
     dataset = _resolve_dataset_name(dataset_name)
-    _download_tinystories_file(dataset)
+    if dataset == "climbmix":
+        _download_climbmix_shards(dataset)
+    else:
+        _download_tinystories_file(dataset)
 
 
 # ---------------------------------------------------------------------------
-# Tokenizer training
+# Tokenizer training (TinyStories) / loading (ClimbMix uses GPT-2)
 # ---------------------------------------------------------------------------
 
 def list_parquet_files(dataset_name=None):
@@ -281,8 +341,56 @@ def text_iterator(dataset_name=None, max_chars=1_000_000_000, doc_cap=10_000):
             return
 
 
+def _build_gpt2_token_bytes():
+    """Build token_bytes lookup for GPT-2 tokenizer (ClimbMix)."""
+    enc = tiktoken.get_encoding("gpt2")
+    token_bytes_list = []
+    for token_id in range(enc.n_vocab):
+        raw = enc.decode_single_token_bytes(token_id)
+        token_bytes_list.append(len(raw))
+    # <|endoftext|> is token 50256 — treat as special (0 bytes for BPB calc)
+    token_bytes_list[CLIMBMIX_GPT2_EOT_TOKEN] = 0
+    return torch.tensor(token_bytes_list, dtype=torch.int32)
+
+
+def _setup_climbmix_tokenizer(dataset_name):
+    """Set up GPT-2 tokenizer files for ClimbMix (no training needed)."""
+    tokenizer_dir = _tokenizer_dir(dataset_name)
+    tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
+    token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
+
+    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
+        print(f"Tokenizer: GPT-2 tokenizer already set up at {tokenizer_dir}")
+        return
+
+    os.makedirs(tokenizer_dir, exist_ok=True)
+
+    print("Tokenizer: setting up GPT-2 tokenizer for ClimbMix...")
+    enc = tiktoken.get_encoding("gpt2")
+
+    # Wrap in a tiktoken Encoding that has our BOS token
+    # ClimbMix uses EOT (50256) as document separator; we'll use it as BOS too
+    with open(tokenizer_pkl, "wb") as f:
+        pickle.dump(enc, f)
+
+    print("Tokenizer: building GPT-2 token_bytes lookup...")
+    token_bytes_tensor = _build_gpt2_token_bytes()
+    torch.save(token_bytes_tensor, token_bytes_path)
+    print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
+
+    with open(os.path.join(tokenizer_dir, "dataset.txt"), "w", encoding="utf-8") as f:
+        f.write(dataset_name + "\n")
+
+    print(f"Tokenizer: GPT-2 ready (vocab_size={enc.n_vocab})")
+
+
 def train_tokenizer(dataset_name=None):
     dataset = _resolve_dataset_name(dataset_name)
+
+    if dataset == "climbmix":
+        _setup_climbmix_tokenizer(dataset)
+        return
+
     tokenizer_dir = _tokenizer_dir(dataset)
     tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
@@ -358,7 +466,12 @@ class Tokenizer:
     def __init__(self, enc, dataset):
         self.enc = enc
         self.dataset = _resolve_dataset_name(dataset)
-        self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
+        self._is_climbmix = self.dataset == "climbmix"
+        if self._is_climbmix:
+            # ClimbMix uses GPT-2 EOT as BOS/document separator
+            self.bos_token_id = CLIMBMIX_GPT2_EOT_TOKEN
+        else:
+            self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
 
     @classmethod
     def from_directory(cls, tokenizer_dir=None, dataset=None):
@@ -401,8 +514,95 @@ def get_token_bytes(device="cpu", dataset=None):
         return torch.load(f, map_location=device)
 
 
+# ---------------------------------------------------------------------------
+# ClimbMix pre-tokenized data iteration
+# ---------------------------------------------------------------------------
+
+def _list_climbmix_shards(dataset_name="climbmix"):
+    """List available ClimbMix shard files, sorted by shard ID."""
+    data_dir = _data_dir(dataset_name)
+    if not os.path.exists(data_dir):
+        return []
+    files = sorted(
+        name for name in os.listdir(data_dir)
+        if name.startswith("shard_") and name.endswith(".parquet")
+    )
+    return [os.path.join(data_dir, name) for name in files]
+
+
+def _iter_climbmix_tokens(split, dataset_name="climbmix"):
+    """Yield pre-tokenized documents from ClimbMix parquet shards.
+
+    Each document is a list of token IDs (ints). For val split, uses last shard.
+    For train split, uses all shards except the last.
+    """
+    shard_paths = _list_climbmix_shards(dataset_name)
+    if not shard_paths:
+        raise FileNotFoundError(
+            "No ClimbMix shards found. Run prepare.py --dataset climbmix first."
+        )
+
+    if split == "val":
+        # Use last downloaded shard for validation
+        shard_paths = shard_paths[-1:]
+    elif split == "train":
+        # Use all shards except last for training
+        if len(shard_paths) > 1:
+            shard_paths = shard_paths[:-1]
+        # If only 1 shard, use it for both train and val (not ideal but functional)
+
+    for shard_path in shard_paths:
+        try:
+            table = pq.read_table(shard_path)
+        except Exception as exc:
+            print(f"Warning: could not read {shard_path}: {exc}")
+            continue
+        # ClimbMix parquets have a "tokens" column with pre-tokenized sequences
+        # Try common column names
+        col_name = None
+        for candidate in ("tokens", "input_ids", "text"):
+            if candidate in table.column_names:
+                col_name = candidate
+                break
+        if col_name is None:
+            print(f"Warning: no recognized token column in {shard_path}, columns: {table.column_names}")
+            continue
+
+        column = table.column(col_name)
+        for row in column.to_pylist():
+            if isinstance(row, list):
+                yield row  # already token IDs
+            elif isinstance(row, str):
+                # Fallback: raw text that needs encoding
+                yield None  # signal to caller to encode
+            else:
+                continue
+
+
+def _document_batches_climbmix(split, dataset_name="climbmix"):
+    """Yield batches of pre-tokenized documents for ClimbMix."""
+    epoch = 1
+    while True:
+        batch = []
+        for tokens in _iter_climbmix_tokens(split, dataset_name):
+            if tokens is None:
+                continue
+            batch.append(tokens)
+            if len(batch) >= 128:
+                yield batch, epoch
+                batch = []
+        if batch:
+            yield batch, epoch
+        epoch += 1
+
+
 def _document_batches(split, dataset=None, tokenizer_batch_size=128):
     dataset_name = _resolve_dataset_name(dataset)
+
+    if dataset_name == "climbmix":
+        yield from _document_batches_climbmix(split, dataset_name)
+        return
+
     assert split in ("train", "val", "test")
 
     epoch = 1
@@ -424,8 +624,12 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
     Every row starts with BOS. Documents packed using best-fit to minimize cropping.
     When no document fits remaining space, crops shortest doc to fill exactly.
     100% utilization (no padding).
+
+    For ClimbMix (pretokenized), documents arrive as token ID lists — no encoding needed.
+    For TinyStories, documents are text strings that get encoded by the tokenizer.
     """
     dataset_name = _resolve_dataset_name(dataset or getattr(tokenizer, "dataset", None))
+    is_pretokenized = dataset_name == "climbmix"
     if split == "test":
         assert dataset_name == "tinystories", "Test split exists only for TinyStories."
     assert split in ("train", "val", "test")
@@ -441,8 +645,14 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
     def refill_buffer():
         nonlocal epoch
         doc_batch, epoch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
+        if is_pretokenized:
+            # ClimbMix: documents are already token ID lists, just prepend BOS
+            for tokens in doc_batch:
+                doc_buffer.append([bos_token] + tokens)
+        else:
+            # TinyStories: encode text to tokens
+            token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
+            doc_buffer.extend(token_lists)
 
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda)
@@ -542,8 +752,14 @@ if __name__ == "__main__":
         default=None,
         help=(
             "Dataset profile to prepare. If omitted, resolves in order: "
-            "AUTORESEARCH_DATASET, active_dataset.txt, then default tinystories."
+            "AUTORESEARCH_DATASET, active_dataset.txt, then default climbmix."
         ),
+    )
+    parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=None,
+        help="Number of ClimbMix shards to download (default: 10).",
     )
     args = parser.parse_args()
 
@@ -553,7 +769,10 @@ if __name__ == "__main__":
     print(f"Dataset: {dataset_name}")
     print()
 
-    download_data(dataset_name)
+    if dataset_name == "climbmix" and args.num_shards is not None:
+        _download_climbmix_shards(dataset_name, num_shards=args.num_shards)
+    else:
+        download_data(dataset_name)
     print()
     train_tokenizer(dataset_name)
     _set_active_dataset(dataset_name)

@@ -79,7 +79,7 @@ MIN_SUPPORTED_VRAM_GB_BY_ARCH = {
 AUTOTUNE_WARMUP_STEPS = 2
 AUTOTUNE_MEASURE_STEPS = 3
 AUTOTUNE_MAX_MEMORY_FRACTION = 0.90
-AUTOTUNE_CACHE_VERSION = "gpu-profile-v2"
+AUTOTUNE_CACHE_VERSION = "gpu-profile-v3"
 
 
 def _get_gpu_peak_flops(gpu_name):
@@ -145,7 +145,7 @@ def _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows):
                 name=mid_tier_name,
                 is_supported_consumer=True,
                 is_compatibility_only=False,
-                train_batch_candidates=(16, 8, 4),
+                train_batch_candidates=(16, 8, 4, 2),
                 checkpoint_modes=(True,),
                 default_checkpointing=True,
             )
@@ -269,8 +269,8 @@ def detect_runtime():
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = tf32_enabled
 
-    use_compile = False
-    print("torch.compile disabled in this fork runtime path.")
+    use_compile = True
+    print("torch.compile enabled.")
     attention_backend = "sdpa"
     print("Using PyTorch SDPA attention backend.")
     force_checkpointing = os.environ.get("AUTORESEARCH_FORCE_CHECKPOINTING")
@@ -303,7 +303,7 @@ MUON_COMPUTE_DTYPE = torch.bfloat16
 
 
 def _maybe_compile(obj, **kwargs):
-    return obj
+    return torch.compile(obj, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -329,11 +329,6 @@ def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
 
-def has_ve(layer_idx, n_layer):
-    """Returns True if layer should have Value Embedding (alternating, last always included)."""
-    return layer_idx % 2 == (n_layer - 1) % 2
-
-
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4
     d = x.shape[3] // 2
@@ -357,8 +352,6 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
         self._mask_cache = {}
 
     def _get_sdpa_mask(self, seq_len, window_size, device):
@@ -376,16 +369,11 @@ class CausalSelfAttention(nn.Module):
         self._mask_cache[cache_key] = mask
         return mask
 
-    def forward(self, x, ve, cos_sin, window_size):
+    def forward(self, x, cos_sin, window_size):
         B, T, _ = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
-
-        if ve is not None:
-            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
-            v = v + gate.unsqueeze(-1) * ve
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
@@ -394,15 +382,17 @@ class CausalSelfAttention(nn.Module):
         q = q.transpose(1, 2)  # (B, H, T, D)
         k = k.transpose(1, 2)  # (B, KVH, T, D)
         v = v.transpose(1, 2)  # (B, KVH, T, D)
-        attn_mask = self._get_sdpa_mask(T, window_size, q.device)
-        y = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            is_causal=False,
-            enable_gqa=self.n_kv_head < self.n_head,
-        )
+        if window_size[0] >= T:
+            y = F.scaled_dot_product_attention(
+                q, k, v, is_causal=True,
+                enable_gqa=self.n_kv_head < self.n_head,
+            )
+        else:
+            attn_mask = self._get_sdpa_mask(T, window_size, q.device)
+            y = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, is_causal=False,
+                enable_gqa=self.n_kv_head < self.n_head,
+            )
         y = y.transpose(1, 2)
 
         y = y.contiguous().view(B, T, -1)
@@ -413,14 +403,13 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        hidden = ((int(config.n_embd * 8 / 3) + 63) // 64) * 64
+        self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_up = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = F.relu(x).square()
-        x = self.c_proj(x)
-        return x
+        return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
 
 
 class Block(nn.Module):
@@ -429,8 +418,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size)
+    def forward(self, x, cos_sin, window_size):
+        x = x + self.attn(norm(x), cos_sin, window_size)
         x = x + self.mlp(norm(x))
         return x
 
@@ -448,11 +437,6 @@ class GPT(nn.Module):
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         head_dim = config.n_embd // config.n_head
-        kv_dim = config.n_kv_head * head_dim
-        self.value_embeds = nn.ModuleDict({
-            str(i): nn.Embedding(config.vocab_size, kv_dim)
-            for i in range(config.n_layer) if has_ve(i, config.n_layer)
-        })
         self.rotary_seq_len = config.sequence_len
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, dtype=config.compute_dtype)
         self.register_buffer("cos", cos, persistent=False)
@@ -469,15 +453,11 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
+            torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
-        for ve in self.value_embeds.values():
-            torch.nn.init.uniform_(ve.weight, -s, s)
-        for block in self.transformer.h:
-            if block.attn.ve_gate is not None:
-                torch.nn.init.zeros_(block.attn.ve_gate.weight)
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(
             self.rotary_seq_len,
@@ -486,8 +466,6 @@ class GPT(nn.Module):
         )
         self.cos, self.sin = cos, sin
         self.transformer.wte.to(dtype=embed_dtype)
-        for ve in self.value_embeds.values():
-            ve.to(dtype=embed_dtype)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None, dtype=torch.bfloat16):
         if device is None:
@@ -517,10 +495,8 @@ class GPT(nn.Module):
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
-        value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
         nparams_exclude = (
             self.transformer.wte.weight.numel()
-            + value_embeds_numel
             + self.resid_lambdas.numel()
             + self.x0_lambdas.numel()
         )
@@ -536,14 +512,12 @@ class GPT(nn.Module):
 
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
-        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        total = wte + lm_head + transformer_matrices + scalars
         return {
             "wte": wte,
-            "value_embeds": value_embeds,
             "lm_head": lm_head,
             "transformer_matrices": transformer_matrices,
             "scalars": scalars,
@@ -554,7 +528,6 @@ class GPT(nn.Module):
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
-        value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
@@ -563,7 +536,6 @@ class GPT(nn.Module):
             len(matrix_params)
             + len(embedding_params)
             + len(lm_head_params)
-            + len(value_embeds_params)
             + len(resid_params)
             + len(x0_params)
         )
@@ -572,7 +544,6 @@ class GPT(nn.Module):
         param_groups = [
             dict(kind="adamw", params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind="adamw", params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
@@ -607,15 +578,14 @@ class GPT(nn.Module):
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             window_size = self.window_sizes[i]
             if self.config.use_activation_checkpointing:
-                x = torch_checkpoint(block, x, ve, cos_sin, window_size, use_reentrant=False)
+                x = torch_checkpoint(block, x, cos_sin, window_size, use_reentrant=False)
             else:
-                x = block(x, ve, cos_sin, window_size)
+                x = block(x, cos_sin, window_size)
         x = norm(x)
 
-        softcap = 15
+        softcap = 30
         logits = self.lm_head(x).float()
         logits = softcap * torch.tanh(logits / softcap)
 
@@ -789,22 +759,22 @@ class MuonAdamW(torch.optim.Optimizer):
 # Model architecture
 ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128            # target head dimension for attention
-WINDOW_PATTERN = "SSSL"   # sliding window pattern: L=full, S=half context
+WINDOW_PATTERN = "L"      # full attention on all layers (enables fast SDPA dispatch)
 
 # Optimization
-TOTAL_BATCH_SIZE = 2 ** 19
-EMBEDDING_LR = 0.6
+TOTAL_BATCH_SIZE = 2 ** 18
+EMBEDDING_LR = 0.4
 UNEMBEDDING_LR = 0.004
-MATRIX_LR = 0.04
+MATRIX_LR = 0.03
 SCALAR_LR = 0.5
 WEIGHT_DECAY = 0.2
 ADAM_BETAS = (0.8, 0.95)
-WARMUP_RATIO = 0.0
-WARMDOWN_RATIO = 0.5
+WARMUP_RATIO = 0.05
+WARMDOWN_RATIO = 0.4
 FINAL_LR_FRAC = 0.0
 
 # Model size + memory defaults
-DEPTH = 8
+DEPTH = 12
 DEVICE_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 8
 
@@ -1027,7 +997,7 @@ def _configure_step_kernels(runtime):
     ADAMW_STEP_IMPL = adamw_step_fused
     MUON_STEP_IMPL = muon_step_fused
     MUON_COMPUTE_DTYPE = runtime.amp_dtype
-    USE_COMPILE = False
+    USE_COMPILE = True
 
 
 def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test):
