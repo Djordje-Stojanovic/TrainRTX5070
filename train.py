@@ -770,7 +770,7 @@ SCALAR_LR = 0.5
 WEIGHT_DECAY = 0.2
 ADAM_BETAS = (0.8, 0.95)
 WARMUP_RATIO = 0.05
-WARMDOWN_RATIO = 0.4
+WARMDOWN_RATIO = 0.3
 FINAL_LR_FRAC = 0.0
 
 # Model size + memory defaults
@@ -1059,7 +1059,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         return (1 - frac) * 0.85 + frac * 0.95
 
     def get_weight_decay(progress):
-        return WEIGHT_DECAY * (1 - progress)
+        return WEIGHT_DECAY
 
     target_training_seconds = 10 if smoke_test else TIME_BUDGET
     max_steps = 3 if smoke_test else None
