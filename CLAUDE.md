@@ -33,9 +33,8 @@ git push origin autoresearch/mar10
 **Description column MUST be diagnostic.** Include: (1) what changed with values, (2) the hypothesis and evidence that motivated it, (3) what happened, (4) the conclusion — WHY it worked/failed and what this rules out. This is the AI's long-term memory. Future sessions read ONLY results.tsv, not git log.
 - Bad: "WARMDOWN_RATIO 0.4→0.3"
 - Bad: "reduce batch size for more steps"
-- Good: "TOTAL_BATCH_SIZE 2^18→2^16 (hypothesis: 32 accum steps bottleneck MFU at 24%, evidence: web search MuonClip): val_bpb 2.14→2.05, MFU 24→31%, confirms accum was the bottleneck"
-- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD (hypothesis: WD decay causes instability, evidence: exp#1 loss spike): loss still explodes 1.77→3.81, proves instability is NOT warmdown-related"
-- Good: "DEPTH 12→14 (n_embd=896, ~220M) (hypothesis: 3.5GB VRAM headroom wasted, evidence: bottleneck diagnosis): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
+- Good: "PARAM_X 0.4→0.3 + PARAM_Y constant (hypothesis: Y decay causes instability, evidence: exp#1 loss spike): loss still explodes 1.77→3.81, proves instability is NOT Y-related"
+- Good: "COMPONENT_A changed from X→Y (hypothesis: [bottleneck] limits val_bpb, evidence: [metric or web search]): val_bpb 1.15→1.10, confirms [bottleneck] was the issue"
 
 **Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed direction.
 
@@ -136,7 +135,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 After every experiment, check these metrics in order:
 
 1. **VRAM utilization**: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. Training VRAM is significantly higher. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. If training VRAM is well below 11.5GB, you have room for a bigger model.
-2. **MFU**: Target 30%+ on this RTX 5070. Currently ~24%. Below 25% means throughput problem — too much gradient accumulation, bad batch size, or inefficient ops.
+2. **MFU**: Target 30%+ on this RTX 5070. If below target, diagnose why — search the web for how to improve MFU at this scale.
 3. **Training stability**: If loss spikes or explodes, fix that before anything else. Search the web for current best practices with your optimizer.
 4. **Loss curve shape**: If loss plateaus early, model likely needs more capacity or different architecture, not hyperparameter tuning.
 
@@ -190,6 +189,6 @@ Your context is finite. To maximize experiments per session:
 - Make one change at a time when possible — easier to attribute improvements
 - If val_bpb doesn't improve, revert (don't accumulate neutral changes)
 - MFU matters: more compute per second = more learning per experiment
-- Check `peak_vram_mb` — leaving VRAM headroom means you could be using a bigger model
+- Check VRAM usage — unused VRAM is wasted potential
 - With 20-min budget, you get ~200-400 optimizer steps — enough for real learning dynamics
 - Simpler is better at equal performance (see program.md simplicity criterion)
