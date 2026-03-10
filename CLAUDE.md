@@ -104,9 +104,10 @@ These are the **fairness invariants** that make experiments comparable:
 
 - **GPU:** RTX 5070, 12GB VRAM, Blackwell CC 12.0
 - **Peak VRAM target:** <11.5 GB (96% of 12GB)
-- **Autotune:** Automatically finds best batch_size + checkpointing combo
+- **Autotune:** Automatically finds best device_batch_size + checkpointing combo, then **caches the result**. The cache key is GPU+PyTorch+seq_len — it does NOT include model size or TOTAL_BATCH_SIZE. So if you change model architecture/depth/width, the cached batch_size may be wrong.
+- **After model size changes:** refresh autotune with `AUTORESEARCH_AUTOTUNE_REFRESH=1`
+- **Autotune cache location:** `~\AppData\Local\autoresearch\gpu-profile-v3.json` — you can read this to see current training VRAM and tok/sec
 - If OOM at all batch sizes, reduce model size or enable more aggressive checkpointing
-- **After model size changes:** refresh autotune with `AUTORESEARCH_AUTOTUNE_REFRESH=1` or the cached batch_size may be wrong
 
 ## Continuing a Run
 
@@ -134,7 +135,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 After every experiment, check these metrics in order:
 
-1. **VRAM utilization**: Training VRAM (from autotune) is ~8.5GB. If significantly below this after a model change, you may have room for a bigger model. But note: `peak_vram_mb` in results is EVAL vram (~3.7GB), not training. Don't confuse them.
+1. **VRAM utilization**: `peak_vram_mb` in the training output and results.tsv is EVAL vram (~3.7GB), NOT training VRAM. Training VRAM is higher (~8.5GB for current 162M model). To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. If training VRAM is well below 11.5GB, you have room for a bigger model.
 2. **MFU**: Target 30%+ on this RTX 5070. Currently ~24%. Below 25% means throughput problem — too much gradient accumulation, bad batch size, or inefficient ops.
 3. **Training stability**: If loss spikes or explodes, fix that before anything else. Search the web for current best practices with your optimizer.
 4. **Loss curve shape**: If loss plateaus early, model likely needs more capacity or different architecture, not hyperparameter tuning.
