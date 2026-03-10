@@ -762,7 +762,7 @@ HEAD_DIM = 128            # target head dimension for attention
 WINDOW_PATTERN = "L"      # full attention on all layers (enables fast SDPA dispatch)
 
 # Optimization
-TOTAL_BATCH_SIZE = 2 ** 15
+TOTAL_BATCH_SIZE = 2 ** 16
 EMBEDDING_LR = 0.4
 UNEMBEDDING_LR = 0.004
 MATRIX_LR = 0.03
