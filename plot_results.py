@@ -143,7 +143,8 @@ def main():
         kept = df[df["status"] == "keep"]
         if not kept.empty:
             best = kept.loc[kept["val_bpb"].idxmin()]
-            print(f"Best val_bpb: {best['val_bpb']:.6f} (experiment #{best.name}, {best['description']})")
+            desc = str(best['description']).encode('ascii', errors='replace').decode()
+            print(f"Best val_bpb: {best['val_bpb']:.6f} (experiment #{best.name}, {desc})")
         plot(df, save_path="progress.png" if args.save else None)
         if not args.save:
             plt.show()
