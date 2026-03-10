@@ -30,10 +30,12 @@ git commit -m "revert: undo <description>"
 git push origin autoresearch/mar10
 ```
 
-**Description column MUST be diagnostic.** Include: (1) what changed with values, (2) what happened, (3) WHY it failed/succeeded. This prevents future sessions from repeating a failed DIRECTION, not just a failed value.
+**Description column MUST be diagnostic.** Include: (1) what changed with values, (2) the hypothesis and evidence that motivated it, (3) what happened, (4) the conclusion — WHY it worked/failed and what this rules out. This is the AI's long-term memory. Future sessions read ONLY results.tsv, not git log.
 - Bad: "WARMDOWN_RATIO 0.4→0.3"
-- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD: loss still explodes 1.77→3.81, proves instability is NOT warmdown-related"
-- Good: "DEPTH 12→14 (n_embd=896, ~220M): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
+- Bad: "reduce batch size for more steps"
+- Good: "TOTAL_BATCH_SIZE 2^18→2^16 (hypothesis: 32 accum steps bottleneck MFU at 24%, evidence: web search MuonClip): val_bpb 2.14→2.05, MFU 24→31%, confirms accum was the bottleneck"
+- Good: "WARMDOWN_RATIO 0.4→0.3 + constant WD (hypothesis: WD decay causes instability, evidence: exp#1 loss spike): loss still explodes 1.77→3.81, proves instability is NOT warmdown-related"
+- Good: "DEPTH 12→14 (n_embd=896, ~220M) (hypothesis: 3.5GB VRAM headroom wasted, evidence: bottleneck diagnosis): val_bpb 1.15→1.10, more params utilizes VRAM headroom"
 
 **Before proposing a new experiment, read results.tsv** to see what was already tried. Do not repeat a failed direction.
 
