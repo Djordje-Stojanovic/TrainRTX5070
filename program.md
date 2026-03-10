@@ -123,6 +123,8 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 **Timeout**: Each experiment should take ~20 minutes total (+ a few minutes for startup/compilation and eval overhead). If a run exceeds 30 minutes, kill it and treat it as a failure (discard and revert).
 
+**Bottleneck escalation**: If you identify the same bottleneck 3 or more experiments in a row without attempting to fix it, your next experiment MUST directly target that bottleneck. Search the web for how to fix it, then try any approach that's within the allowed changes — architecture, model size, optimizer, training loop, hyperparameters, or anything else listed as fair game. Don't defer it again.
+
 **Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
 
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
