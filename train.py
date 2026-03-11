@@ -1032,6 +1032,18 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         matrix_lr=MATRIX_LR,
         weight_decay=WEIGHT_DECAY,
     )
+    # FP8 training: convert eligible Linear layers to Float8Linear for faster matmuls
+    try:
+        from torchao.float8 import convert_to_float8_training
+        def _fp8_filter(mod, fqn):
+            if isinstance(mod, nn.Linear):
+                return mod.in_features % 16 == 0 and mod.out_features % 16 == 0
+            return True
+        convert_to_float8_training(model, module_filter_fn=_fp8_filter)
+        print(f"FP8 training enabled (skipped layers with dims not divisible by 16)")
+    except Exception as e:
+        print(f"FP8 not available ({e}), using bf16")
+
     model = _maybe_compile(model, dynamic=False)
 
     train_loader = make_dataloader(

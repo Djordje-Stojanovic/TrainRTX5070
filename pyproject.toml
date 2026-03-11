@@ -16,6 +16,7 @@ dependencies = [
     "triton-windows<3.6",
     "datasets>=3.0",
     "huggingface-hub>=0.25",
+    "torchao>=0.10",
 ]
 
 [tool.uv.sources]
