@@ -1062,6 +1062,8 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         _mx_cfg = MXLinearConfig.from_recipe_name('mxfp8_cublas')
         def _mxfp8_filter(mod, fqn):
             if isinstance(mod, nn.Linear):
+                if 'mtp_proj' in fqn:
+                    return False  # MTP uses non-32-aligned seq lengths
                 return mod.in_features % 32 == 0 and mod.out_features % 32 == 0
             return False
         quantize_(model, _mx_cfg, filter_fn=_mxfp8_filter)
