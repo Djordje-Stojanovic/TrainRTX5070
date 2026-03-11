@@ -55,7 +55,8 @@ Once the script finishes it prints a summary like this:
 val_bpb:          0.997900
 training_seconds: 1200.1
 total_seconds:    1325.9
-peak_vram_mb:     9500.2
+peak_vram_mb:     7000.5
+eval_vram_mb:     4500.3
 mfu_percent:      30.50
 total_tokens_M:   84.0
 num_steps:        320
@@ -63,6 +64,8 @@ num_params_M:     162.0
 depth:            12
 dataset:          climbmix
 ```
+
+`peak_vram_mb` is **real GPU VRAM** during training (measured via `torch.cuda.mem_get_info()`, matches nvidia-smi). Use this value divided by 1024 for the `memory_gb` column in results.tsv.
 
 Note that the script is configured to always stop after 20 minutes. You can extract the key metrics from the log file:
 
@@ -82,7 +85,7 @@ commit	val_bpb	memory_gb	mfu	tok_per_sec	num_steps	num_params_M	batch_size	final
 
 1. git commit hash (short, 7 chars)
 2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 9.5 — divide peak_vram_mb by 1024) — use 0.0 for crashes
+3. peak training VRAM in GB, round to .1f (e.g. 7.0 — divide peak_vram_mb by 1024) — use 0.0 for crashes
 4. mfu percent (e.g. 24.3) — GPU compute efficiency — use 0.0 for crashes
 5. tok_per_sec — throughput (e.g. 37000) — use 0 for crashes
 6. num_steps — optimizer steps completed in 20 min — use 0 for crashes
@@ -96,9 +99,9 @@ Example:
 
 ```
 commit	val_bpb	memory_gb	mfu	tok_per_sec	num_steps	num_params_M	batch_size	final_loss	status	description
-a1b2c3d	1.150000	9.3	24.3	37000	157	162.1	4	1.850	keep	baseline (SwiGLU d12 ClimbMix)
-b2c3d4e	1.142000	9.5	25.1	38500	163	162.1	4	1.820	keep	increase LR to 0.05
-c3d4e5f	1.160000	9.3	24.0	37000	157	162.1	4	1.900	discard	switch to GeLU activation
+a1b2c3d	1.150000	7.0	24.3	37000	157	162.1	4	1.850	keep	baseline (SwiGLU d12 ClimbMix)
+b2c3d4e	1.142000	7.2	25.1	38500	163	162.1	4	1.820	keep	increase LR to 0.05
+c3d4e5f	1.160000	7.0	24.0	37000	157	162.1	4	1.900	discard	switch to GeLU activation
 d4e5f6g	0.000000	0.0	0.0	0	0	0.0	0	0.000	crash	double model width (OOM)
 ```
 

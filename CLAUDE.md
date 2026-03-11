@@ -106,7 +106,7 @@ These are the **fairness invariants** that make experiments comparable:
 - **Peak VRAM target:** <11.5 GB (96% of 12GB)
 - **Autotune:** Automatically finds best device_batch_size + checkpointing combo from candidates (16, 12, 8, 6, 5, 4, 3, 2), then **caches the result**. The cache key is GPU+PyTorch+seq_len — it does NOT include model size or TOTAL_BATCH_SIZE. So if you change model architecture/depth/width, the cached batch_size may be wrong.
 - **After model size changes:** refresh autotune with `AUTORESEARCH_AUTOTUNE_REFRESH=1`
-- **Autotune cache location:** `~\AppData\Local\autoresearch\gpu-profile-v3.json` — you can read this to see current training VRAM and tok/sec
+- **Autotune cache location:** `~\AppData\Local\autoresearch\gpu-profile-v3.json` — note: this measures eager-mode VRAM which overreports by ~2 GB vs compiled training. Use `peak_vram_mb` from the training output instead (it uses `mem_get_info()` = nvidia-smi equivalent)
 - If OOM at all batch sizes, reduce model size or enable more aggressive checkpointing
 
 ## Continuing a Run
@@ -135,7 +135,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 **Every experiment must target whatever is most limiting val_bpb.** Check your metrics (MFU, VRAM, training stability, loss curve) and decide what to improve. This could be a structural change (architecture, memory, training loop) OR hyperparameter tuning — whichever has the highest expected impact. If a structural metric is clearly broken (loss diverging, OOM), fix that first. Otherwise, use your judgment.
 
-Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. **ALWAYS use the autotune cache value for `memory_gb` in results.tsv, NEVER use `peak_vram_mb` from the training output.**
+**VRAM reporting:** `peak_vram_mb` in the training output now uses `torch.cuda.mem_get_info()` which matches nvidia-smi (real GPU memory usage). Use this value directly for `memory_gb` in results.tsv (divide by 1024). Do NOT use the autotune cache — it measures eager-mode VRAM which overreports by ~2 GB vs compiled training.
 
 If you don't know how to fix a bottleneck, search the web first. Use any approach within the allowed changes — architecture, model size, optimizer, training loop, or anything else listed as fair game.
 

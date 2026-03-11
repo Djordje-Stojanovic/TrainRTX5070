@@ -893,7 +893,9 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
             if step_idx >= AUTOTUNE_WARMUP_STEPS:
                 measured_time += dt
 
-        peak_memory = torch.cuda.max_memory_allocated()
+        # Use mem_get_info for real VRAM check (matches nvidia-smi)
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        peak_memory = total_bytes - free_bytes
         peak_limit = runtime.gpu_total_memory_bytes * AUTOTUNE_MAX_MEMORY_FRACTION
         if peak_memory > peak_limit:
             return None
@@ -1137,7 +1139,10 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
             break
 
     print()
-    train_peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    # Use mem_get_info for real VRAM (matches nvidia-smi), not max_memory_allocated
+    # which only tracks tensor allocations and misses caching allocator + triton workspace
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    train_peak_vram_mb = (total_bytes - free_bytes) / 1024 / 1024
     return {
         "model": model,
         "num_params": num_params,
@@ -1291,7 +1296,8 @@ def main():
         )
     else:
         steady_state_mfu = None
-    eval_peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    eval_peak_vram_mb = (total_bytes - free_bytes) / 1024 / 1024
     train_peak_vram_mb = result["train_peak_vram_mb"]
     total_tokens = step * TOTAL_BATCH_SIZE
 
