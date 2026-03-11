@@ -422,12 +422,7 @@ class GPT(nn.Module):
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
         })
-        # Two VE groups: first half and second half of layers get separate embeddings
-        n_ve_groups = 2
-        self.value_embs = nn.ModuleList([
-            nn.Embedding(config.vocab_size, config.n_embd) for _ in range(n_ve_groups)
-        ])
-        self.n_ve_groups = n_ve_groups
+        self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
@@ -440,8 +435,7 @@ class GPT(nn.Module):
     @torch.no_grad()
     def init_weights(self, embed_dtype=torch.bfloat16):
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
-        for ve in self.value_embs:
-            torch.nn.init.normal_(ve.weight, mean=0.0, std=0.02)
+        torch.nn.init.normal_(self.value_emb.weight, mean=0.0, std=0.02)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
@@ -494,7 +488,7 @@ class GPT(nn.Module):
         nparams = sum(p.numel() for p in self.parameters())
         nparams_exclude = (
             self.transformer.wte.weight.numel()
-            + sum(ve.weight.numel() for ve in self.value_embs)
+            + self.value_emb.weight.numel()
             + self.resid_lambdas.numel()
             + self.x0_lambdas.numel()
         )
@@ -510,7 +504,7 @@ class GPT(nn.Module):
 
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
-        value_emb = sum(p.numel() for ve in self.value_embs for p in ve.parameters())
+        value_emb = sum(p.numel() for p in self.value_emb.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
@@ -529,7 +523,7 @@ class GPT(nn.Module):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
-        value_emb_params = [p for ve in self.value_embs for p in ve.parameters()]
+        value_emb_params = list(self.value_emb.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
@@ -579,12 +573,9 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        n_layers = self.config.n_layer
-        layers_per_group = n_layers // self.n_ve_groups
-        ve_list = [ve_mod(idx) for ve_mod in self.value_embs]
+        ve = self.value_emb(idx)
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = ve_list[min(i // layers_per_group, self.n_ve_groups - 1)]
             window_size = self.window_sizes[i]
             if self.config.use_activation_checkpointing:
                 x = torch_checkpoint(block, x, cos_sin, window_size, ve, use_reentrant=False)
