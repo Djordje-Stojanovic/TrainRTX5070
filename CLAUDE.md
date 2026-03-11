@@ -141,6 +141,28 @@ If you don't know how to fix a bottleneck, search the web first. Use any approac
 
 **Hypothesis protocol (mandatory):** Every commit message must include: `Bottleneck: [X]. Hypothesis: [Y] because [Z]. Evidence: [prior experiment / web search / metric].` If you have no evidence, search the web first. After reverting a failed experiment, re-read train.py to confirm what state you're in — reverts undo ALL changes from that experiment, not just the one you're thinking about.
 
+## Experiment Prioritization (Explore vs Exploit)
+
+Prioritize experiments by **expected impact × probability of success**:
+
+| Category | Impact | Success Rate | When to Use |
+|----------|--------|-------------|-------------|
+| Architecture (new attention, MLP, embeddings) | High | Low (~20%) | Plateau or fresh session |
+| Training dynamics (schedule, warmup, cooldown) | Medium | Medium (~40%) | After architecture is stable |
+| Hyperparameter tuning (LR, WD, batch) | Low | High (~60%) | Fine-tuning a working setup |
+| Memory/throughput (batch sizing, checkpointing) | Indirect | High (~70%) | When VRAM underutilized or MFU < 50% |
+
+**Plateau detection rule (MANDATORY):** Count the last 5 non-crash experiments. If none improved val_bpb by more than 0.005, you are in a plateau. When in a plateau:
+
+1. STOP doing hyperparameter sweeps. They won't break you out.
+2. Do a focused web search session: 3-4 searches on architecture innovations at your parameter scale (100M-300M params, single GPU, 2025-2026).
+3. Your next 2 experiments MUST be high-impact architecture changes (new component, structural redesign, different scaling strategy). Accept higher failure risk.
+4. Only return to hyperparameter tuning after an architecture change produces a new KEEP.
+
+**Compound change rule (MANDATORY):** Never change more than one *category* per experiment. Changing MATRIX_LR and WEIGHT_DECAY together is fine (both hyperparameter tuning). Changing MATRIX_LR and switching to a new MLP architecture is NOT — you won't know which caused the result.
+
+**Don't run 3 consecutive experiments from the same category.** If you just did 2 LR sweeps, your next experiment must be from a different category, even if you have a promising LR value to try. Breadth beats depth in autonomous research.
+
 ## Web Search — Your Most Powerful Tool
 
 Don't just search when stuck. **Search proactively.** The field moves monthly. Today's date is March 2026.
