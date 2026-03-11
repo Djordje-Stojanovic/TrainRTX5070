@@ -1032,29 +1032,17 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         matrix_lr=MATRIX_LR,
         weight_decay=WEIGHT_DECAY,
     )
-    # MXFP8 training: Blackwell-native microscaling FP8 with block-of-32 scaling via cuBLAS
+    # FP8 training: convert eligible Linear layers to Float8Linear for faster matmuls
     try:
-        from torchao import quantize_
-        from torchao.prototype.mx_formats.mx_linear import MXLinearConfig
-        mx_config = MXLinearConfig.from_recipe_name("mxfp8_cublas")
+        from torchao.float8 import convert_to_float8_training
         def _fp8_filter(mod, fqn):
-            if not isinstance(mod, nn.Linear):
-                return False
-            return mod.in_features % 16 == 0 and mod.out_features % 16 == 0
-        quantize_(model, mx_config, filter_fn=_fp8_filter)
-        print(f"MXFP8 training enabled (cuBLAS, block_size=32, skipped layers with dims not div by 16)")
+            if isinstance(mod, nn.Linear):
+                return mod.in_features % 16 == 0 and mod.out_features % 16 == 0
+            return True
+        convert_to_float8_training(model, module_filter_fn=_fp8_filter)
+        print(f"FP8 training enabled (skipped layers with dims not divisible by 16)")
     except Exception as e:
-        print(f"MXFP8 not available ({e}), falling back to standard FP8")
-        try:
-            from torchao.float8 import convert_to_float8_training
-            def _fp8_filter_fallback(mod, fqn):
-                if isinstance(mod, nn.Linear):
-                    return mod.in_features % 16 == 0 and mod.out_features % 16 == 0
-                return True
-            convert_to_float8_training(model, module_filter_fn=_fp8_filter_fallback)
-            print(f"FP8 training enabled (fallback)")
-        except Exception as e2:
-            print(f"FP8 not available ({e2}), using bf16")
+        print(f"FP8 not available ({e}), using bf16")
 
     model = _maybe_compile(model, dynamic=False)
 
