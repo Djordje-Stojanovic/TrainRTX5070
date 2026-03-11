@@ -165,7 +165,7 @@ Prioritize experiments by **expected impact × probability of success**:
 
 ## Web Search — Your Most Powerful Tool
 
-Don't just search when stuck. **Search proactively.** The field moves monthly. Today's date is March 2026.
+Don't just search when stuck. **Search proactively.** The field changes monthly.
 
 **When to search:**
 - Before your first experiment each session
@@ -175,26 +175,49 @@ Don't just search when stuck. **Search proactively.** The field moves monthly. T
 - Whenever a metric (MFU, VRAM, val_bpb) plateaus
 
 **Search areas** (rotate through ALL of these over time — don't fixate on one):
-1. **Architecture** — what's the current best architecture at this scale?
-2. **Optimizer** — what's the current best optimizer and schedule?
-3. **Memory efficiency** — how do SOTA models minimize VRAM per parameter?
-4. **Throughput / MFU** — how do SOTA models maximize useful compute?
-5. **Hardware-specific** — what does our GPU (Blackwell/CC 12.0) support that we're not using?
-6. **Training techniques** — what training tricks are current SOTA models using?
-7. **Leaderboard** — what are nanochat/modded-nanogpt leaders doing differently?
-8. **Frontier** — what new techniques appeared in the last 3 months?
+1. **Architecture** — attention variants, MLP designs, embeddings, normalization, positional encoding
+2. **Optimizer** — optimizer algorithms, LR schedules, momentum, weight decay strategies
+3. **Memory efficiency** — VRAM per parameter, activation checkpointing, mixed precision, gradient compression
+4. **Throughput / MFU** — compute utilization, kernel fusion, batching strategies, compilation
+5. **Hardware-specific** — Blackwell/CC 12.0, CUDA features, tensor core utilization, memory bandwidth
+6. **Training dynamics** — loss stability, convergence speed, regularization, initialization
+7. **Scaling laws** — optimal model size vs tokens vs compute for a fixed time budget
+8. **Data efficiency** — learning more per token, curriculum strategies, data ordering effects
+9. **Competitive benchmarks** — open-source training speedruns, leaderboards across all projects
+10. **Frontier papers** — latest arxiv from top labs (Google, Meta, Mistral, DeepSeek, etc.)
 
-**How to search** (templates, not fixed strings):
-- `"best [area] for small LLM training 2026"` — discover what's current
-- `"[our current choice] vs alternatives 2026"` — question every assumption
-- `"state of the art [area] March 2026"` — find what just changed
-- `"nanochat autoresearch improvements"` — see what other agents found
+**How to search** (substitute [variables] with your ACTUAL current context — bottleneck, component, metric values, model size, etc. Never reuse the same query string across experiments):
+1. `"[component] alternatives transformer training 2026"` — question every architectural choice
+2. `"[current_bottleneck] solution LLM pretraining 2026"` — target your specific problem
+3. `"[current_choice] vs [alternative] transformer 2026"` — head-to-head comparisons
+4. `"optimal [hyperparameter] [model_size]M parameter language model 2026"` — scale-aware tuning
+5. `"state of the art transformer architecture 2026 arxiv"` — find latest papers
+6. `"improve [metric] deep learning training 2026"` — target a specific metric (MFU, val_loss, VRAM)
+7. `"[GPU_architecture] optimization CUDA kernels 2026"` — hardware-specific wins
+8. `"training instability [symptom] transformer fix 2026"` — debug specific problems
+9. `"compute optimal training [tokens]M tokens [params]M parameters"` — scaling law guidance
+10. `"[technique_that_failed] when does it work transformer"` — understand your failures
+11. `"activation memory reduction transformer training 2026"` — memory-specific techniques
+12. `"learning rate schedule short training budget 2026"` — schedule for limited compute
+13. `"competitive LLM training benchmark leaderboard 2026"` — see what winners do across projects
+14. `"[lab_name] training recipe language model 2026"` — study specific lab approaches
+15. `"novel [attention|MLP|embedding] mechanism 2026 arxiv"` — cutting-edge architecture
+16. `"data efficiency pretraining fewer tokens 2026"` — extract more learning per token
+17. `"[technique] failure modes limitations"` — research BEFORE implementing, not after
+18. `"FLOPS utilization single GPU transformer 2026"` — throughput-specific optimization
+19. `"weight initialization transformer convergence 2026"` — init strategies for faster learning
+20. `"[parameter_count]M parameter transformer best practices 2026"` — scale-specific advice
 
 **Rules:**
-- Always add the current year. A 2023 technique may be obsolete.
-- Never repeat the same search string twice across experiments — vary your queries.
-- Read actual papers and code, not blog summaries.
+- Always include "2026" — a 2023 technique may be obsolete.
+- Never repeat the same search string across experiments — vary words AND structure.
+- Substitute [variables] with real values from your current experiment context.
+- **Don't cargo-cult.** Understanding WHY a technique works matters more than copying WHAT someone did. A technique optimal for 8xH100 may hurt on a single 12GB GPU.
+- **Search before implementing.** After finding a technique, also search `"[technique] failure modes"` or `"[technique] limitations"` before trying it.
+- **Cross-reference scales.** A technique from a 7B model paper might adapt down; a trick from a 50M model might scale up. Don't filter by model size in your queries.
+- Read arxiv papers and source code, not blog summaries or marketing posts.
 - Question everything in train.py: is each component still SOTA, or was it SOTA in 2025?
+- If search results are dominated by one project/repo, search again with different terms for diverse perspectives.
 
 ## Context Window Management
 
