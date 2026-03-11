@@ -135,7 +135,7 @@ Max ~5 checks per run. Calibrate: if runs take ~22 min, first sleep can be 10 mi
 
 **Every experiment must target whatever is most limiting val_bpb.** Check your metrics (MFU, VRAM, training stability, loss curve) and decide what to improve. This could be a structural change (architecture, memory, training loop) OR hyperparameter tuning — whichever has the highest expected impact. If a structural metric is clearly broken (loss diverging, OOM), fix that first. Otherwise, use your judgment.
 
-Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`.
+Note: `peak_vram_mb` in the training output is EVAL vram, NOT training VRAM. To check actual training VRAM, read the autotune cache: `cat ~/AppData/Local/autoresearch/gpu-profile-v3.json`. **ALWAYS use the autotune cache value for `memory_gb` in results.tsv, NEVER use `peak_vram_mb` from the training output.**
 
 If you don't know how to fix a bottleneck, search the web first. Use any approach within the allowed changes — architecture, model size, optimizer, training loop, or anything else listed as fair game.
 
