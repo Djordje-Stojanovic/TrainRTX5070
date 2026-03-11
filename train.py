@@ -1202,7 +1202,9 @@ def main():
 
     tokenizer = Tokenizer.from_directory(dataset=args.dataset)
     vocab_size = tokenizer.get_vocab_size()
-    print(f"Vocab size: {vocab_size:,}")
+    # Pad vocab to next multiple of 128 for FP8 compatibility (all Linear dims divisible by 16)
+    vocab_size = ((vocab_size + 127) // 128) * 128
+    print(f"Vocab size: {vocab_size:,} (padded for FP8)")
     print(f"Dataset: {tokenizer.dataset}")
 
     # Configure optimizer kernels/dtypes before autotune so probes match real training runtime.
