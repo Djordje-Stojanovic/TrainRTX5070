@@ -755,7 +755,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 54         # model_dim = depth * ASPECT_RATIO (14*54=756→768)
+ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128            # target head dimension for attention
 WINDOW_PATTERN = "L"      # full attention on all layers (enables fast SDPA dispatch)
 
@@ -772,7 +772,7 @@ WARMDOWN_RATIO = 0.5
 FINAL_LR_FRAC = 0.1
 
 # Model size + memory defaults
-DEPTH = 14
+DEPTH = 12
 DEVICE_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 8
 
