@@ -594,9 +594,6 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
-            # z-loss: prevent logit drift (PaLM/Gemma technique)
-            z_loss = 1e-4 * logits.float().pow(2).mean()
-            loss = loss + z_loss
             return loss
         return logits
 
