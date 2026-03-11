@@ -1064,6 +1064,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     max_steps = 3 if smoke_test else None
 
     t_start_training = time.time()
+    torch.cuda.reset_peak_memory_stats()  # clean baseline for training VRAM measurement
     smooth_train_loss = 0.0
     total_training_time = 0.0
     step = 0
@@ -1136,6 +1137,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
             break
 
     print()
+    train_peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
     return {
         "model": model,
         "num_params": num_params,
@@ -1144,6 +1146,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         "step": step,
         "t_start": t_start,
         "t_start_training": t_start_training,
+        "train_peak_vram_mb": train_peak_vram_mb,
     }
 
 
@@ -1288,14 +1291,16 @@ def main():
         )
     else:
         steady_state_mfu = None
-    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    eval_peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    train_peak_vram_mb = result["train_peak_vram_mb"]
     total_tokens = step * TOTAL_BATCH_SIZE
 
     print("---")
     print(f"val_bpb:          {val_bpb:.6f}")
     print(f"training_seconds: {total_training_time:.1f}")
     print(f"total_seconds:    {t_end - result['t_start']:.1f}")
-    print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+    print(f"peak_vram_mb:     {train_peak_vram_mb:.1f}")
+    print(f"eval_vram_mb:     {eval_peak_vram_mb:.1f}")
     if steady_state_mfu is None:
         print("mfu_percent:      n/a")
     else:

@@ -1,5 +1,5 @@
 """
-Plot experiment results from results.tsv (Karpathy-style progress chart).
+Plot experiment results from results.tsv (multi-panel progress chart).
 
 Usage:
     python plot_results.py              # show plot
@@ -26,64 +26,99 @@ def load_results(path="results.tsv"):
 
 
 def plot(df, save_path=None):
-    fig, ax = plt.subplots(figsize=(14, 7))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    ax_bpb = axes[0, 0]
+    ax_mfu = axes[0, 1]
+    ax_vram = axes[1, 0]
+    ax_tput = axes[1, 1]
 
     kept = df[df["status"] == "keep"].copy()
     discarded = df[df["status"].isin(["discard", "crash"])].copy()
-    num_kept = len(kept)
+    valid = df[df["val_bpb"] > 0].copy()  # non-crash experiments
 
     fig.suptitle(
-        f"Autoresearch Progress: {len(df)} Experiments, {num_kept} Kept Improvements",
+        f"Autoresearch Progress: {len(df)} Experiments, {len(kept)} Kept Improvements",
         fontsize=14, fontweight="bold",
     )
 
-    # Plot discarded experiments as gray dots
+    # --- Panel 1: val_bpb ---
     if not discarded.empty:
         valid_disc = discarded[discarded["val_bpb"] > 0]
         if not valid_disc.empty:
-            ax.scatter(
+            ax_bpb.scatter(
                 valid_disc.index, valid_disc["val_bpb"],
                 c="#cccccc", s=30, zorder=2, alpha=0.6,
                 edgecolors="white", linewidth=0.3, label="Discarded",
             )
-
-    # Plot kept experiments as green dots
     if not kept.empty:
         kept["best_so_far"] = kept["val_bpb"].cummin()
-
-        ax.scatter(
+        ax_bpb.scatter(
             kept.index, kept["val_bpb"],
             c="#2ecc71", s=60, zorder=4, edgecolors="white", linewidth=0.5,
             label="Kept",
         )
-
-        # Running best step line
-        ax.step(
+        ax_bpb.step(
             kept.index, kept["best_so_far"],
             where="post", color="#2ecc71", linewidth=2, zorder=3,
             label="Running best",
         )
-
-        # Label each kept experiment with its description
         for idx, row in kept.iterrows():
             desc = str(row.get("description", ""))
-            # Truncate long descriptions
-            if len(desc) > 45:
-                desc = desc[:42] + "..."
-            ax.annotate(
+            if len(desc) > 40:
+                desc = desc[:37] + "..."
+            ax_bpb.annotate(
                 desc,
                 xy=(idx, row["val_bpb"]),
                 xytext=(5, 5), textcoords="offset points",
-                fontsize=6.5, color="#333333", rotation=25,
+                fontsize=6, color="#333333", rotation=25,
                 ha="left", va="bottom",
             )
+    ax_bpb.set_xlabel("Experiment #", fontsize=10)
+    ax_bpb.set_ylabel("val_bpb (lower is better)", fontsize=10)
+    ax_bpb.legend(fontsize=8, loc="upper right")
+    ax_bpb.grid(True, alpha=0.2)
 
-    ax.set_xlabel("Experiment #", fontsize=12)
-    ax.set_ylabel("Validation BPB (lower is better)", fontsize=12)
-    ax.legend(fontsize=9, loc="upper right")
-    ax.grid(True, alpha=0.2)
+    # --- Panel 2: MFU % ---
+    if "mfu" in valid.columns:
+        mfu_data = valid[pd.notna(valid["mfu"]) & (valid["mfu"] > 0)]
+        if not mfu_data.empty:
+            colors = ["#2ecc71" if s == "keep" else "#cccccc" for s in mfu_data["status"]]
+            ax_mfu.bar(mfu_data.index, mfu_data["mfu"], color=colors, edgecolor="white", linewidth=0.3)
+            ax_mfu.axhline(y=mfu_data["mfu"].mean(), color="#e74c3c", linestyle="--", linewidth=1, alpha=0.6, label=f"Mean: {mfu_data['mfu'].mean():.1f}%")
+            ax_mfu.legend(fontsize=8)
+    ax_mfu.set_xlabel("Experiment #", fontsize=10)
+    ax_mfu.set_ylabel("MFU %", fontsize=10)
+    ax_mfu.set_title("GPU Compute Efficiency", fontsize=11)
+    ax_mfu.grid(True, alpha=0.2, axis="y")
 
-    # Add summary stats as text box
+    # --- Panel 3: Training VRAM (GB) ---
+    if "memory_gb" in valid.columns:
+        vram_data = valid[pd.notna(valid["memory_gb"]) & (valid["memory_gb"] > 0)]
+        if not vram_data.empty:
+            colors = ["#2ecc71" if s == "keep" else "#cccccc" for s in vram_data["status"]]
+            ax_vram.bar(vram_data.index, vram_data["memory_gb"], color=colors, edgecolor="white", linewidth=0.3)
+            ax_vram.axhline(y=12.0, color="#e74c3c", linestyle="-", linewidth=1.5, alpha=0.8, label="GPU limit (12 GB)")
+            ax_vram.set_ylim(0, 13)
+            ax_vram.legend(fontsize=8)
+    ax_vram.set_xlabel("Experiment #", fontsize=10)
+    ax_vram.set_ylabel("Training VRAM (GB)", fontsize=10)
+    ax_vram.set_title("Memory Usage", fontsize=11)
+    ax_vram.grid(True, alpha=0.2, axis="y")
+
+    # --- Panel 4: Throughput (tok/sec) ---
+    if "tok_per_sec" in valid.columns:
+        tput_data = valid[pd.notna(valid["tok_per_sec"]) & (valid["tok_per_sec"] > 0)]
+        if not tput_data.empty:
+            colors = ["#2ecc71" if s == "keep" else "#cccccc" for s in tput_data["status"]]
+            ax_tput.bar(tput_data.index, tput_data["tok_per_sec"], color=colors, edgecolor="white", linewidth=0.3)
+            ax_tput.axhline(y=tput_data["tok_per_sec"].mean(), color="#e74c3c", linestyle="--", linewidth=1, alpha=0.6, label=f"Mean: {tput_data['tok_per_sec'].mean():,.0f} tok/s")
+            ax_tput.legend(fontsize=8)
+    ax_tput.set_xlabel("Experiment #", fontsize=10)
+    ax_tput.set_ylabel("Throughput (tok/sec)", fontsize=10)
+    ax_tput.set_title("Training Throughput", fontsize=11)
+    ax_tput.grid(True, alpha=0.2, axis="y")
+
+    # Summary stats text box on val_bpb panel
     if not kept.empty:
         best_bpb = kept["val_bpb"].min()
         best_row = kept.loc[kept["val_bpb"].idxmin()]
@@ -93,11 +128,11 @@ def plot(df, save_path=None):
         if "tok_per_sec" in df.columns and pd.notna(best_row.get("tok_per_sec")):
             stats_lines.append(f"Throughput: {best_row['tok_per_sec']:.0f} tok/s")
         if "memory_gb" in df.columns and pd.notna(best_row.get("memory_gb")):
-            stats_lines.append(f"VRAM: {best_row['memory_gb']:.1f}/12.0 GB")
+            stats_lines.append(f"Train VRAM: {best_row['memory_gb']:.1f}/12.0 GB")
         stats_text = "\n".join(stats_lines)
-        ax.text(
+        ax_bpb.text(
             0.02, 0.02, stats_text,
-            transform=ax.transAxes, fontsize=9,
+            transform=ax_bpb.transAxes, fontsize=9,
             verticalalignment="bottom", fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.8, edgecolor="#cccccc"),
         )
