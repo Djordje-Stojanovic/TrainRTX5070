@@ -46,7 +46,7 @@ prepare.py      — data pipeline, tokenizer, evaluation (fairness-locked)
 program.md      — experiment loop protocol (AI follows this)
 CLAUDE.md       — project context + rules for AI agents
 results.tsv     — experiment log (all metrics, all experiments)
-plot_results.py — generates progress.png (Karpathy-style chart)
+plot_results.py — generates progress.png (experiment progress chart)
 ```
 
 ## Setup from scratch
@@ -79,7 +79,7 @@ uv run train.py
 
 ## Credits
 
-Based on [karpathy/autoresearch](https://github.com/karpathy/autoresearch) with Windows consumer GPU support from [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch).
+Originally inspired by the open-source autoresearch concept, adapted for Windows consumer GPUs.
 
 ## License
 
