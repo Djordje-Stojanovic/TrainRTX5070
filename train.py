@@ -426,9 +426,6 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
-        # U-Net skip connections: first half layers connect to second half (reversed)
-        n_skips = config.n_layer // 2
-        self.skip_gates = nn.Parameter(torch.full((n_skips,), -1.5))  # sigmoid(-1.5) ≈ 0.18
         head_dim = config.n_embd // config.n_head
         self.rotary_seq_len = config.sequence_len
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, dtype=config.compute_dtype)
@@ -452,7 +449,6 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
-        self.skip_gates.fill_(-1.5)
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(
             self.rotary_seq_len,
@@ -495,7 +491,6 @@ class GPT(nn.Module):
             + self.value_emb.weight.numel()
             + self.resid_lambdas.numel()
             + self.x0_lambdas.numel()
-            + self.skip_gates.numel()
         )
         h = self.config.n_head
         q = self.config.n_embd // self.config.n_head
@@ -512,7 +507,7 @@ class GPT(nn.Module):
         value_emb = sum(p.numel() for p in self.value_emb.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.skip_gates.numel()
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_emb + lm_head + transformer_matrices + scalars
         return {
             "wte": wte,
@@ -532,7 +527,6 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        skip_params = [self.skip_gates]
         assert len(list(self.parameters())) == (
             len(matrix_params)
             + len(embedding_params)
@@ -540,7 +534,6 @@ class GPT(nn.Module):
             + len(lm_head_params)
             + len(resid_params)
             + len(x0_params)
-            + len(skip_params)
         )
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
@@ -550,7 +543,6 @@ class GPT(nn.Module):
             dict(kind="adamw", params=value_emb_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
-            dict(kind="adamw", params=skip_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
         muon_group_chunk = 8
         for shape in sorted({p.shape for p in matrix_params}):
@@ -582,9 +574,6 @@ class GPT(nn.Module):
         x = norm(x)
         x0 = x
         ve = self.value_emb(idx)
-        n_layers = self.config.n_layer
-        n_half = n_layers // 2
-        skip_outputs = []
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             window_size = self.window_sizes[i]
@@ -592,13 +581,6 @@ class GPT(nn.Module):
                 x = torch_checkpoint(block, x, cos_sin, window_size, ve, use_reentrant=False)
             else:
                 x = block(x, cos_sin, window_size, ve=ve)
-            # U-Net: save first half outputs, add to second half (reversed)
-            if i < n_half:
-                skip_outputs.append(x)
-            elif i >= n_half:
-                skip_idx = n_layers - 1 - i  # maps layer 6→5, 7→4, ..., 11→0
-                gate = torch.sigmoid(self.skip_gates[skip_idx])
-                x = x + gate * skip_outputs[skip_idx]
         x = norm(x)
 
         softcap = 30
