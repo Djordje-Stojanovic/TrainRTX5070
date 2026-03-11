@@ -17,3 +17,10 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+
+# Training artifacts
+checkpoint_pre_eval.pt
+run.log
+
+# IDE / local config
+.claude/settings.local.json
