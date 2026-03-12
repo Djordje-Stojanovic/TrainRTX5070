@@ -1227,9 +1227,9 @@ def main():
     _configure_step_kernels(runtime)
 
     train_candidates = _build_train_candidates(runtime)
-    # Force batch=4: eager-mode autotune can't predict compiled+flex_attention VRAM accurately.
-    # Compiled training uses ~7.3 GB at batch=4 (well within 12 GB).
-    autotuned_candidate = (4, True)
+    # Force batch=8: eager-mode autotune can't predict compiled+flex_attention VRAM accurately.
+    # Compiled training uses ~8.8 GB at batch=4, ~3.4 GB headroom suggests batch=8 should fit.
+    autotuned_candidate = (8, True)
     train_candidates = _prioritize_autotuned_candidate(train_candidates, autotuned_candidate)
 
     print(f"Attention backend: {runtime.attention_backend}")
