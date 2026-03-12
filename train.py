@@ -388,9 +388,9 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config, hidden_override=None):
+    def __init__(self, config):
         super().__init__()
-        hidden = hidden_override or ((int(config.n_embd * 8 / 3) + 63) // 64) * 64
+        hidden = ((int(config.n_embd * 8 / 3) + 63) // 64) * 64
         self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
         self.c_up = nn.Linear(config.n_embd, hidden, bias=False)
         self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
@@ -399,39 +399,11 @@ class MLP(nn.Module):
         return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
 
 
-class SparseMoEMLP(nn.Module):
-    """Top-1 sparse MoE: 4 smaller SwiGLU experts, same active FLOPs per token."""
-    def __init__(self, config):
-        super().__init__()
-        n_experts = 4
-        # Each expert is ~1/2 the size of the dense MLP
-        expert_hidden = ((int(config.n_embd * 8 / 3 / 2) + 63) // 64) * 64
-        self.experts = nn.ModuleList([MLP(config, hidden_override=expert_hidden) for _ in range(n_experts)])
-        self.router = nn.Linear(config.n_embd, n_experts, bias=False)
-        self.n_experts = n_experts
-
-    def forward(self, x):
-        B, T, D = x.shape
-        x_flat = x.view(-1, D)  # (B*T, D)
-        # Router logits and top-1 selection
-        router_logits = self.router(x_flat)  # (B*T, n_experts)
-        router_probs = F.softmax(router_logits, dim=-1)
-        expert_idx = router_probs.argmax(dim=-1)  # (B*T,)
-        expert_weights = router_probs.gather(1, expert_idx.unsqueeze(-1)).squeeze(-1)  # (B*T,)
-        # Dispatch tokens to experts
-        output = torch.zeros_like(x_flat)
-        for i, expert in enumerate(self.experts):
-            mask = expert_idx == i
-            if mask.any():
-                output[mask] = expert_weights[mask].unsqueeze(-1) * expert(x_flat[mask])
-        return output.view(B, T, D)
-
-
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = SparseMoEMLP(config)
+        self.mlp = MLP(config)
         self.use_mlp_checkpointing = config.use_activation_checkpointing
 
     def forward(self, x, cos_sin, window_size, ve=None):
