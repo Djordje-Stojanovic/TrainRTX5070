@@ -20,6 +20,7 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from prepare import (
@@ -341,18 +342,17 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self._mask_cache = {}
 
-    def _get_sdpa_mask(self, seq_len, window_size, device):
-        window = window_size[0] if isinstance(window_size, tuple) else window_size
+    def _get_flex_block_mask(self, seq_len, window, device):
         cache_key = (seq_len, int(window), device.type, device.index)
         mask = self._mask_cache.get(cache_key)
         if mask is not None:
             return mask
-
-        row = torch.arange(seq_len, device=device).unsqueeze(1)
-        col = torch.arange(seq_len, device=device).unsqueeze(0)
-        mask = col <= row  # causal
-        if window is not None and window >= 0 and window < seq_len:
-            mask = mask & (col >= (row - window))
+        WINDOW = window
+        def sliding_causal(b, h, q_idx, kv_idx):
+            causal = q_idx >= kv_idx
+            windowed = q_idx - kv_idx <= WINDOW
+            return causal & windowed
+        mask = create_block_mask(sliding_causal, B=None, H=None, Q_LEN=seq_len, KV_LEN=seq_len, device=device)
         self._mask_cache[cache_key] = mask
         return mask
 
@@ -377,11 +377,9 @@ class CausalSelfAttention(nn.Module):
                 enable_gqa=self.n_kv_head < self.n_head,
             )
         else:
-            attn_mask = self._get_sdpa_mask(T, window_size, q.device)
-            y = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=attn_mask, is_causal=False,
-                enable_gqa=self.n_kv_head < self.n_head,
-            )
+            block_mask = self._get_flex_block_mask(T, window_size[0], q.device)
+            y = flex_attention(q, k, v, block_mask=block_mask,
+                              enable_gqa=self.n_kv_head < self.n_head)
         y = y.transpose(1, 2)
 
         y = y.contiguous().view(B, T, -1)
@@ -758,7 +756,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # Model architecture
 ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128            # target head dimension for attention
-WINDOW_PATTERN = "L"      # full attention on all layers (enables fast SDPA dispatch)
+WINDOW_PATTERN = "SSSL"   # sliding window on early layers, full on every 4th
 
 # Optimization
 TOTAL_BATCH_SIZE = 2 ** 16
