@@ -406,10 +406,14 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        self.use_mlp_checkpointing = config.use_activation_checkpointing
 
     def forward(self, x, cos_sin, window_size, ve=None):
         x = x + self.attn(norm(x), cos_sin, window_size, ve=ve)
-        x = x + self.mlp(norm(x))
+        if self.use_mlp_checkpointing:
+            x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
+        else:
+            x = x + self.mlp(norm(x))
         return x
 
 
@@ -577,10 +581,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             window_size = self.window_sizes[i]
-            if self.config.use_activation_checkpointing:
-                x = torch_checkpoint(block, x, cos_sin, window_size, ve, use_reentrant=False)
-            else:
-                x = block(x, cos_sin, window_size, ve=ve)
+            x = block(x, cos_sin, window_size, ve=ve)
         x = norm(x)
 
         softcap = 15
