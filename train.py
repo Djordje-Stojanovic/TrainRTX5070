@@ -583,12 +583,12 @@ class GPT(nn.Module):
         x = norm(x)
 
         softcap = 15
-        logits = self.lm_head(x).float()
+        logits = self.lm_head(x)
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
             loss = F.cross_entropy(
-                logits.float().view(-1, logits.size(-1)),
+                logits.view(-1, logits.size(-1)),
                 targets.view(-1),
                 ignore_index=-1,
                 reduction=reduction,
