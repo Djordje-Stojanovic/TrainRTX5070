@@ -337,10 +337,14 @@ class CausalSelfAttention(nn.Module):
         self.attention_backend = config.attention_backend
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
+        # Differential attention: double Q heads, keep K/V same (GQA ratio 2:1)
+        self.n_q_head = 2 * self.n_head  # 12 Q sub-heads
+        self.c_q = nn.Linear(self.n_embd, self.n_q_head * self.head_dim, bias=False)
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        # Learned lambda for differential subtraction (per head, init ~0.8 per paper)
+        self.diff_lambda = nn.Parameter(torch.full((self.n_head,), 0.8))
         self._mask_cache = {}
 
     def _get_flex_block_mask(self, seq_len, window, device):
@@ -359,7 +363,8 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x, cos_sin, window_size, ve=None):
         B, T, _ = x.size()
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
+        # Differential attention: 2*n_head Q sub-heads, n_kv_head K/V heads
+        q = self.c_q(x).view(B, T, self.n_q_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
         if ve is not None:
@@ -369,18 +374,25 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        q = q.transpose(1, 2)  # (B, H, T, D)
+        q = q.transpose(1, 2)  # (B, 2*H, T, D)
         k = k.transpose(1, 2)  # (B, KVH, T, D)
-        v = v.transpose(1, 2).to(q.dtype)  # (B, KVH, T, D), match q dtype for flex_attention
+        v = v.transpose(1, 2).to(q.dtype)  # (B, KVH, T, D)
+        # GQA: 2*n_head Q heads, n_kv_head KV heads (ratio 2*n_head/n_kv_head)
+        use_gqa = self.n_kv_head < self.n_q_head
         if window_size[0] >= T:
             y = F.scaled_dot_product_attention(
                 q, k, v, is_causal=True,
-                enable_gqa=self.n_kv_head < self.n_head,
+                enable_gqa=use_gqa,
             )
         else:
             block_mask = self._get_flex_block_mask(T, window_size[0], q.device)
             y = flex_attention(q, k, v, block_mask=block_mask,
-                              enable_gqa=self.n_kv_head < self.n_head)
+                              enable_gqa=use_gqa)
+        # y: (B, 2*H, T, D) -> differential subtraction
+        y = y.view(B, self.n_head, 2, T, self.head_dim)
+        # Subtract: positive head - lambda * negative head
+        lam = self.diff_lambda.view(1, self.n_head, 1, 1)
+        y = y[:, :, 0] - lam * y[:, :, 1]  # (B, H, T, D)
         y = y.transpose(1, 2)
 
         y = y.contiguous().view(B, T, -1)
@@ -452,6 +464,8 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
+        for block in self.transformer.h:
+            block.attn.diff_lambda.fill_(0.8)
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(
             self.rotary_seq_len,
@@ -494,15 +508,17 @@ class GPT(nn.Module):
             + self.value_emb.weight.numel()
             + self.resid_lambdas.numel()
             + self.x0_lambdas.numel()
+            + sum(block.attn.diff_lambda.numel() for block in self.transformer.h)
         )
-        h = self.config.n_head
+        # Differential attention: 2*n_head Q sub-heads for attention computation
+        h_attn = 2 * self.config.n_head  # actual number of attention heads
         q = self.config.n_embd // self.config.n_head
         t = self.config.sequence_len
         attn_flops = 0
         for window_size in self.window_sizes:
             window = window_size[0]
             effective_seq = t if window < 0 else min(window, t)
-            attn_flops += 12 * h * q * effective_seq
+            attn_flops += 12 * h_attn * q * effective_seq
         return 6 * (nparams - nparams_exclude) + attn_flops
 
     def num_scaling_params(self):
@@ -510,7 +526,7 @@ class GPT(nn.Module):
         value_emb = sum(p.numel() for p in self.value_emb.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + sum(block.attn.diff_lambda.numel() for block in self.transformer.h)
         total = wte + value_emb + lm_head + transformer_matrices + scalars
         return {
             "wte": wte,
@@ -524,7 +540,10 @@ class GPT(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        # Separate diff_lambda (1D scalar) from matrix params (2D) in transformer.h
+        diff_lambda_params = [block.attn.diff_lambda for block in self.transformer.h]
+        diff_lambda_ids = {id(p) for p in diff_lambda_params}
+        matrix_params = [p for p in self.transformer.h.parameters() if id(p) not in diff_lambda_ids]
         embedding_params = list(self.transformer.wte.parameters())
         value_emb_params = list(self.value_emb.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -537,6 +556,7 @@ class GPT(nn.Module):
             + len(lm_head_params)
             + len(resid_params)
             + len(x0_params)
+            + len(diff_lambda_params)
         )
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
@@ -546,6 +566,7 @@ class GPT(nn.Module):
             dict(kind="adamw", params=value_emb_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(kind="adamw", params=diff_lambda_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
         ]
         muon_group_chunk = 8
         for shape in sorted({p.shape for p in matrix_params}):
