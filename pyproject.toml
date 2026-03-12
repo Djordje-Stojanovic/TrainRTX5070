@@ -17,8 +17,6 @@ dependencies = [
     "datasets>=3.0",
     "huggingface-hub>=0.25",
     "torchao>=0.16",
-    "flash-linear-attention>=0.4",
-    "einops>=0.8",
 ]
 
 [tool.uv.sources]
