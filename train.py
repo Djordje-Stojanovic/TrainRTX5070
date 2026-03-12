@@ -428,6 +428,8 @@ class GPT(nn.Module):
         })
         self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head.weight = self.transformer.wte.weight  # weight tying
+        self.embed_scale = math.sqrt(config.n_embd)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         head_dim = config.n_embd // config.n_head
@@ -440,7 +442,6 @@ class GPT(nn.Module):
     def init_weights(self, embed_dtype=torch.bfloat16):
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.value_emb.weight, mean=0.0, std=0.02)
-        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
         for block in self.transformer.h:
@@ -490,6 +491,8 @@ class GPT(nn.Module):
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
+        # Add lm_head weight back since it's tied with wte but still does a matmul
+        nparams += self.lm_head.weight.numel()
         nparams_exclude = (
             self.transformer.wte.weight.numel()
             + self.value_emb.weight.numel()
@@ -509,7 +512,7 @@ class GPT(nn.Module):
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_emb = sum(p.numel() for p in self.value_emb.parameters())
-        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        lm_head = 0  # tied with wte
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_emb + lm_head + transformer_matrices + scalars
@@ -526,24 +529,21 @@ class GPT(nn.Module):
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
-        embedding_params = list(self.transformer.wte.parameters())
+        embedding_params = list(self.transformer.wte.parameters())  # tied with lm_head
         value_emb_params = list(self.value_emb.parameters())
-        lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
             + len(embedding_params)
             + len(value_emb_params)
-            + len(lm_head_params)
             + len(resid_params)
             + len(x0_params)
         )
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
-            dict(kind="adamw", params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind="adamw", params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind="adamw", params=embedding_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=value_emb_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
@@ -574,7 +574,7 @@ class GPT(nn.Module):
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
-        x = self.transformer.wte(idx)
+        x = self.transformer.wte(idx) * self.embed_scale
         x = norm(x)
         x0 = x
         ve = self.value_emb(idx)
