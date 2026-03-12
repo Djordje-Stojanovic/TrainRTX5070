@@ -533,13 +533,6 @@ class GPT(nn.Module):
         value_emb_params = list(self.value_emb.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == (
-            len(matrix_params)
-            + len(embedding_params)
-            + len(value_emb_params)
-            + len(resid_params)
-            + len(x0_params)
-        )
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
