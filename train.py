@@ -405,10 +405,26 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        self.has_attn = True
         self.use_mlp_checkpointing = config.use_activation_checkpointing
 
     def forward(self, x, cos_sin, window_size, ve=None):
         x = x + self.attn(norm(x), cos_sin, window_size, ve=ve)
+        if self.use_mlp_checkpointing:
+            x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
+        else:
+            x = x + self.mlp(norm(x))
+        return x
+
+
+class MLPOnlyBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.mlp = MLP(config)
+        self.has_attn = False
+        self.use_mlp_checkpointing = config.use_activation_checkpointing
+
+    def forward(self, x, cos_sin, window_size, ve=None):
         if self.use_mlp_checkpointing:
             x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
         else:
@@ -421,9 +437,15 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
+        blocks = []
+        for i in range(config.n_layer):
+            if i % 2 == 1:  # odd layers: MLP-only (no attention)
+                blocks.append(MLPOnlyBlock(config))
+            else:  # even layers: full attention + MLP
+                blocks.append(Block(config, i))
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+            "h": nn.ModuleList(blocks),
         })
         self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -443,10 +465,11 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            if block.has_attn:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
@@ -483,7 +506,12 @@ class GPT(nn.Module):
         for layer_idx in range(config.n_layer):
             char = pattern[layer_idx % len(pattern)]
             window_sizes.append(char_to_window[char])
-        window_sizes[-1] = (long_window, 0)
+        # Ensure the last attention-capable layer gets full attention
+        for i in range(len(window_sizes) - 1, -1, -1):
+            # Check if this layer will have attention (even-indexed layers)
+            if i % 2 == 0:  # even layers have attention
+                window_sizes[i] = (long_window, 0)
+                break
         return window_sizes
 
     def estimate_flops(self):
@@ -499,7 +527,9 @@ class GPT(nn.Module):
         q = self.config.n_embd // self.config.n_head
         t = self.config.sequence_len
         attn_flops = 0
-        for window_size in self.window_sizes:
+        for i, window_size in enumerate(self.window_sizes):
+            if not self.transformer.h[i].has_attn:
+                continue
             window = window_size[0]
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
@@ -755,7 +785,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
+ASPECT_RATIO = 74         # model_dim = depth * ASPECT_RATIO (896 dim with heterogeneous blocks)
 HEAD_DIM = 128            # target head dimension for attention
 WINDOW_PATTERN = "SSSL"   # sliding window on early layers, full on every 4th
 SHORT_WINDOW = 256        # short window size in tokens (modded-nanogpt uses 128-384)
