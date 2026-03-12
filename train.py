@@ -424,7 +424,6 @@ class GPT(nn.Module):
         })
         self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.mtp_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         head_dim = config.n_embd // config.n_head
@@ -438,7 +437,6 @@ class GPT(nn.Module):
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.value_emb.weight, mean=0.0, std=0.02)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
-        torch.nn.init.zeros_(self.mtp_proj.weight)
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
         for block in self.transformer.h:
@@ -509,9 +507,8 @@ class GPT(nn.Module):
         value_emb = sum(p.numel() for p in self.value_emb.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        mtp = sum(p.numel() for p in self.mtp_proj.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_emb + lm_head + transformer_matrices + mtp + scalars
+        total = wte + value_emb + lm_head + transformer_matrices + scalars
         return {
             "wte": wte,
             "value_emb": value_emb,
@@ -525,7 +522,6 @@ class GPT(nn.Module):
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
-        mtp_params = list(self.mtp_proj.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         value_emb_params = list(self.value_emb.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -533,7 +529,6 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
-            + len(mtp_params)
             + len(embedding_params)
             + len(value_emb_params)
             + len(lm_head_params)
@@ -549,10 +544,9 @@ class GPT(nn.Module):
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        all_muon_params = matrix_params + mtp_params
         muon_group_chunk = 8
-        for shape in sorted({p.shape for p in all_muon_params}):
-            group_params = [p for p in all_muon_params if p.shape == shape]
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
             for ci in range(0, len(group_params), muon_group_chunk):
                 chunk = group_params[ci:ci + muon_group_chunk]
                 param_groups.append(
@@ -600,19 +594,6 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
-            # Multi-token prediction: predict t+2 from position t
-            if T > 2 and self.training:
-                x_mtp = x[:, :-2] + self.mtp_proj(x[:, :-2])  # residual transform
-                x_mtp = norm(x_mtp)
-                mtp_logits = self.lm_head(x_mtp).float()
-                mtp_logits = softcap * torch.tanh(mtp_logits / softcap)
-                mtp_loss = F.cross_entropy(
-                    mtp_logits.view(-1, mtp_logits.size(-1)),
-                    targets[:, 2:].contiguous().view(-1),
-                    ignore_index=-1,
-                    reduction=reduction,
-                )
-                loss = loss + 0.3 * mtp_loss
             return loss
         return logits
 
@@ -1062,8 +1043,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         _mx_cfg = MXLinearConfig.from_recipe_name('mxfp8_cublas')
         def _mxfp8_filter(mod, fqn):
             if isinstance(mod, nn.Linear):
-                if 'mtp_proj' in fqn:
-                    return False  # MTP uses non-32-aligned seq lengths
                 return mod.in_features % 32 == 0 and mod.out_features % 32 == 0
             return False
         quantize_(model, _mx_cfg, filter_fn=_mxfp8_filter)
