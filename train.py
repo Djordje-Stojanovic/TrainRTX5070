@@ -1025,17 +1025,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
     tokens_per_fwdbwd = device_batch_size * MAX_SEQ_LEN
-    base_grad_accum = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
-    grad_accum_steps = base_grad_accum  # will be dynamically adjusted
-
-    def get_grad_accum(progress):
-        """Dynamic batch size curriculum: small batch early, large batch late."""
-        if progress < 0.5:
-            return max(1, base_grad_accum // 8)   # 1 (eff batch = 8K tokens)
-        elif progress < 0.8:
-            return max(1, base_grad_accum // 4)   # 2 (eff batch = 16K tokens)
-        else:
-            return max(1, base_grad_accum // 2)   # 4 (eff batch = 32K tokens)
+    grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
     optimizer = model.setup_optimizer(
         unembedding_lr=UNEMBEDDING_LR,
         embedding_lr=EMBEDDING_LR,
@@ -1114,12 +1104,11 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     while True:
         torch.cuda.synchronize()
         t0 = time.time()
-        current_grad_accum = get_grad_accum(min(total_training_time / max(target_training_seconds, 1e-6), 1.0))
-        for _ in range(current_grad_accum):
+        for _ in range(grad_accum_steps):
             with autocast_ctx:
                 loss = model(x, y)
             train_loss = loss.detach()
-            loss = loss / current_grad_accum
+            loss = loss / grad_accum_steps
             loss.backward()
             x, y, epoch = next(train_loader)
 
@@ -1149,10 +1138,9 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
         debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
         pct_done = 100 * progress
-        actual_tokens = current_grad_accum * tokens_per_fwdbwd
-        tok_per_sec = int(actual_tokens / dt)
+        tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
         if runtime.gpu_peak_flops:
-            mfu = 100 * num_flops_per_token * actual_tokens / dt / runtime.gpu_peak_flops
+            mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / runtime.gpu_peak_flops
             mfu_text = f"{mfu:.1f}%"
         else:
             mfu_text = "n/a"
