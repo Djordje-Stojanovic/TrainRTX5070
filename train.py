@@ -405,9 +405,38 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
         self.use_mlp_checkpointing = config.use_activation_checkpointing
+        self.is_gated_deltanet = False
 
     def forward(self, x, cos_sin, window_size, ve=None):
         x = x + self.attn(norm(x), cos_sin, window_size, ve=ve)
+        if self.use_mlp_checkpointing:
+            x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
+        else:
+            x = x + self.mlp(norm(x))
+        return x
+
+
+class GatedDeltaBlock(nn.Module):
+    """Block using Gated DeltaNet (linear attention) instead of standard attention."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        from fla.layers import GatedDeltaNet as GDN
+        self.gdn = GDN(
+            hidden_size=config.n_embd,
+            num_heads=config.n_head,
+            head_dim=config.n_embd // config.n_head,
+        )
+        self.mlp = MLP(config)
+        self.use_mlp_checkpointing = config.use_activation_checkpointing
+        self.is_gated_deltanet = True
+
+    def forward(self, x, cos_sin, window_size, ve=None):
+        # GatedDeltaNet handles its own norm internally
+        gdn_out = self.gdn(norm(x))
+        # fla returns (output, recurrent_state) tuple
+        if isinstance(gdn_out, tuple):
+            gdn_out = gdn_out[0]
+        x = x + gdn_out
         if self.use_mlp_checkpointing:
             x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
         else:
@@ -420,9 +449,18 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
+        # Hybrid: GatedDeltaNet for most layers, full attention every 4th (layers 3,7,11)
+        pattern = config.window_pattern.upper()
+        blocks = []
+        for i in range(config.n_layer):
+            char = pattern[i % len(pattern)]
+            if char == "L":  # Full attention layers keep standard Block
+                blocks.append(Block(config, i))
+            else:  # Sliding window layers become GatedDeltaNet
+                blocks.append(GatedDeltaBlock(config, i))
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+            "h": nn.ModuleList(blocks),
         })
         self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -442,10 +480,12 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            if not block.is_gated_deltanet:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
+            # GatedDeltaNet layers use their own internal init
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
