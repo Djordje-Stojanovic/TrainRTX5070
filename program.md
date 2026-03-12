@@ -67,6 +67,8 @@ dataset:          climbmix
 
 `peak_vram_mb` is **real GPU VRAM** during training (measured via `torch.cuda.mem_get_info()`, matches nvidia-smi). Use this value divided by 1024 for the `memory_gb` column in results.tsv.
 
+**MFU caveat:** `mfu_percent` is measured against **BF16 peak FLOPS** (~65.6 TFLOPS), but training uses MXFP8 which has ~4x higher theoretical peak. Reported MFU values (80-90%) are relative to BF16 only — useful for comparing experiments, not as absolute efficiency. Do not change the benchmark mid-run.
+
 Note that the script is configured to always stop after 20 minutes. You can extract the key metrics from the log file:
 
 ```

@@ -55,7 +55,7 @@ Read **`program.md`** for the full experiment loop protocol, logging format, and
 | Optimizer | Muon (matrices) + AdamW (embeddings, scalars) |
 | Compile | torch.compile via triton-windows |
 | Attention | SDPA with is_causal=True (FlashAttention fast path) |
-| MFU | ~53-58% (measured via runtime benchmark, not lookup table) |
+| MFU | ~80-90% **relative to BF16 peak** (see MFU caveat below) |
 | Time budget | 20 minutes per experiment |
 | Metric | val_bpb (bits per byte) — lower is better |
 
@@ -69,6 +69,10 @@ prepare.py      — Data pipeline, tokenizer, evaluation, constants.
 pyproject.toml  — Dependencies.
 results.tsv     — Experiment log (created during runs).
 ```
+
+## MFU Measurement Caveat
+
+**MFU is measured against BF16 peak FLOPS (~65.6 TFLOPS via runtime matmul benchmark), but training uses MXFP8 matmuls which have ~4x higher theoretical peak (246.9 TFLOPS on RTX 5070).** This means reported MFU values (80-90%) are inflated — real FP8 utilization is ~20-25%. We keep the BF16 benchmark for consistency across all 60+ experiments. MFU is still useful as a **relative** metric between experiments (higher = better throughput), just not a meaningful absolute efficiency number. Do NOT change the benchmark — it would break cross-experiment comparisons.
 
 ## What You Can Change
 
