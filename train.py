@@ -370,7 +370,7 @@ class CausalSelfAttention(nn.Module):
 
         q = q.transpose(1, 2)  # (B, H, T, D)
         k = k.transpose(1, 2)  # (B, KVH, T, D)
-        v = v.transpose(1, 2)  # (B, KVH, T, D)
+        v = v.transpose(1, 2).to(q.dtype)  # (B, KVH, T, D), match q dtype for flex_attention
         if window_size[0] >= T:
             y = F.scaled_dot_product_attention(
                 q, k, v, is_causal=True,
