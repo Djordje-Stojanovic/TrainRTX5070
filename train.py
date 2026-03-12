@@ -1095,13 +1095,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     target_training_seconds = 10 if smoke_test else TIME_BUDGET
     max_steps = 3 if smoke_test else None
 
-    # EMA weights on CPU during last 30% of training (SWA-like)
-    EMA_START = 0.7   # start collecting at 70% progress
-    EMA_DECAY = 0.98  # slower decay = smoother average
-    EMA_EVERY = 5     # update EMA every N steps
-    ema_state = None   # will be initialized on first EMA step
-    ema_active = False
-
     t_start_training = time.time()
     torch.cuda.reset_peak_memory_stats()  # clean baseline for training VRAM measurement
     smooth_train_loss = 0.0
@@ -1130,17 +1123,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
                 group["weight_decay"] = muon_weight_decay
         optimizer.step()
         model.zero_grad(set_to_none=True)
-
-        # EMA update during cooldown
-        if progress >= EMA_START and step % EMA_EVERY == 0:
-            raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
-            if ema_state is None:
-                ema_state = {k: v.detach().float().cpu().clone() for k, v in raw_model.state_dict().items()}
-                ema_active = True
-            else:
-                with torch.no_grad():
-                    for k, v in raw_model.state_dict().items():
-                        ema_state[k].mul_(EMA_DECAY).add_(v.detach().float().cpu(), alpha=1 - EMA_DECAY)
 
         train_loss_f = train_loss.item()
         if train_loss_f > 100:
@@ -1191,18 +1173,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     # which only tracks tensor allocations and misses caching allocator + triton workspace
     free_bytes, total_bytes = torch.cuda.mem_get_info()
     train_peak_vram_mb = (total_bytes - free_bytes) / 1024 / 1024
-
-    # Load EMA weights for evaluation if available
-    if ema_active and ema_state is not None:
-        print("Loading EMA weights for evaluation...")
-        raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
-        device = next(raw_model.parameters()).device
-        dtype_map = {k: v.dtype for k, v in raw_model.state_dict().items()}
-        ema_gpu = {k: v.to(device=device, dtype=dtype_map[k]) for k, v in ema_state.items()}
-        raw_model.load_state_dict(ema_gpu)
-        del ema_state, ema_gpu
-        print("EMA weights loaded successfully.")
-
     return {
         "model": model,
         "num_params": num_params,
