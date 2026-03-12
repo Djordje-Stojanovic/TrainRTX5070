@@ -563,7 +563,9 @@ class GPT(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        # Muon needs 2D matrices; non-2D params (1D biases, 3D conv weights) go to AdamW
+        matrix_params = [p for p in self.transformer.h.parameters() if p.ndim == 2]
+        non_matrix_h_params = [p for p in self.transformer.h.parameters() if p.ndim != 2]
         embedding_params = list(self.transformer.wte.parameters())
         value_emb_params = list(self.value_emb.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -571,6 +573,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
+            + len(non_matrix_h_params)
             + len(embedding_params)
             + len(value_emb_params)
             + len(lm_head_params)
@@ -586,6 +589,10 @@ class GPT(nn.Module):
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
+        if non_matrix_h_params:
+            param_groups.append(
+                dict(kind="adamw", params=non_matrix_h_params, lr=matrix_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0)
+            )
         muon_group_chunk = 8
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
