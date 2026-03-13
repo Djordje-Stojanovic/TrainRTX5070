@@ -434,8 +434,6 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, dtype=config.compute_dtype)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
-        self._window_warmup = None
-        self._window_warmup_phases = None
 
     @torch.no_grad()
     def init_weights(self, embed_dtype=torch.bfloat16):
@@ -475,11 +473,11 @@ class GPT(nn.Module):
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
-    def _compute_window_sizes(self, config, short_window_override=None):
+    def _compute_window_sizes(self, config):
         pattern = config.window_pattern.upper()
         assert all(c in "SL" for c in pattern)
         long_window = config.sequence_len
-        short_window = short_window_override or config.short_window
+        short_window = config.short_window
         char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
         window_sizes = []
         for layer_idx in range(config.n_layer):
@@ -569,12 +567,6 @@ class GPT(nn.Module):
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
-
-    def set_window_phase(self, phase_idx):
-        """Switch to a precomputed window phase (call OUTSIDE compiled forward)."""
-        if self._window_warmup_phases is not None:
-            phase_idx = min(phase_idx, len(self._window_warmup_phases) - 1)
-            self.window_sizes = self._window_warmup_phases[phase_idx]
 
     def forward(self, idx, targets=None, reduction="mean"):
         B, T = idx.size()
@@ -767,7 +759,6 @@ ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128            # target head dimension for attention
 WINDOW_PATTERN = "SSSL"   # sliding window on early layers, full on every 4th
 SHORT_WINDOW = 256        # short window size in tokens (modded-nanogpt uses 128-384)
-WINDOW_WARMUP = (128, 256, 512)  # 3-phase window warmup: (phase1, phase2, phase3)
 
 # Optimization
 TOTAL_BATCH_SIZE = 2 ** 16
@@ -1023,13 +1014,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         model = GPT(config)
     model.to_empty(device=runtime.device)
     model.init_weights(embed_dtype=runtime.amp_dtype)
-    if WINDOW_WARMUP is not None:
-        model._window_warmup = WINDOW_WARMUP
-        model._window_warmup_phases = [
-            model._compute_window_sizes(config, short_window_override=w)
-            for w in WINDOW_WARMUP
-        ]
-        model.set_window_phase(0)  # start with smallest window
 
     param_counts = model.num_scaling_params()
     num_params = param_counts["total"]
@@ -1120,12 +1104,6 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     while True:
         torch.cuda.synchronize()
         t0 = time.time()
-        progress = min(total_training_time / max(target_training_seconds, 1e-6), 1.0)
-        if WINDOW_WARMUP is not None:
-            n_phases = len(WINDOW_WARMUP)
-            phase_idx = min(int(progress * n_phases), n_phases - 1)
-            raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
-            raw_model.set_window_phase(phase_idx)
         for _ in range(grad_accum_steps):
             with autocast_ctx:
                 loss = model(x, y)
@@ -1133,6 +1111,8 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
             loss = loss / grad_accum_steps
             loss.backward()
             x, y, epoch = next(train_loader)
+
+        progress = min(total_training_time / max(target_training_seconds, 1e-6), 1.0)
         lrm = get_lr_multiplier(progress)
         muon_momentum = get_muon_momentum(step)
         muon_weight_decay = get_weight_decay(progress)
