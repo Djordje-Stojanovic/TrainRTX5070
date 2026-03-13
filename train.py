@@ -434,6 +434,8 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, dtype=config.compute_dtype)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        self._window_warmup = None
+        self._current_short_window = config.short_window
 
     @torch.no_grad()
     def init_weights(self, embed_dtype=torch.bfloat16):
@@ -473,11 +475,11 @@ class GPT(nn.Module):
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
-    def _compute_window_sizes(self, config):
+    def _compute_window_sizes(self, config, short_window_override=None):
         pattern = config.window_pattern.upper()
         assert all(c in "SL" for c in pattern)
         long_window = config.sequence_len
-        short_window = config.short_window
+        short_window = short_window_override or config.short_window
         char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
         window_sizes = []
         for layer_idx in range(config.n_layer):
@@ -568,10 +570,19 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction="mean"):
+    def forward(self, idx, targets=None, reduction="mean", progress=0.0):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
+
+        # Dynamic window warmup: pick phase based on progress
+        if self._window_warmup is not None:
+            n_phases = len(self._window_warmup)
+            phase_idx = min(int(progress * n_phases), n_phases - 1)
+            current_short = self._window_warmup[phase_idx]
+            if current_short != self._current_short_window:
+                self._current_short_window = current_short
+                self.window_sizes = self._compute_window_sizes(self.config, short_window_override=current_short)
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -759,6 +770,7 @@ ASPECT_RATIO = 64         # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128            # target head dimension for attention
 WINDOW_PATTERN = "SSSL"   # sliding window on early layers, full on every 4th
 SHORT_WINDOW = 256        # short window size in tokens (modded-nanogpt uses 128-384)
+WINDOW_WARMUP = (128, 256, 512)  # 3-phase window warmup: (phase1, phase2, phase3)
 
 # Optimization
 TOTAL_BATCH_SIZE = 2 ** 16
@@ -1014,6 +1026,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         model = GPT(config)
     model.to_empty(device=runtime.device)
     model.init_weights(embed_dtype=runtime.amp_dtype)
+    model._window_warmup = WINDOW_WARMUP
 
     param_counts = model.num_scaling_params()
     num_params = param_counts["total"]
@@ -1104,15 +1117,14 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     while True:
         torch.cuda.synchronize()
         t0 = time.time()
+        progress = min(total_training_time / max(target_training_seconds, 1e-6), 1.0)
         for _ in range(grad_accum_steps):
             with autocast_ctx:
-                loss = model(x, y)
+                loss = model(x, y, progress=progress)
             train_loss = loss.detach()
             loss = loss / grad_accum_steps
             loss.backward()
             x, y, epoch = next(train_loader)
-
-        progress = min(total_training_time / max(target_training_seconds, 1e-6), 1.0)
         lrm = get_lr_multiplier(progress)
         muon_momentum = get_muon_momentum(step)
         muon_weight_decay = get_weight_decay(progress)
