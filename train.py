@@ -425,7 +425,11 @@ class GPT(nn.Module):
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
         })
-        self.value_emb = nn.Embedding(config.vocab_size, config.n_embd)
+        self.num_ve = 3
+        self.value_embeds = nn.ModuleList([
+            nn.Embedding(config.vocab_size, config.n_embd) for _ in range(self.num_ve)
+        ])
+        self.ve_lambdas = nn.Parameter(torch.zeros(self.num_ve, config.n_layer))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
@@ -438,7 +442,8 @@ class GPT(nn.Module):
     @torch.no_grad()
     def init_weights(self, embed_dtype=torch.bfloat16):
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
-        torch.nn.init.normal_(self.value_emb.weight, mean=0.0, std=0.02)
+        for ve in self.value_embeds:
+            torch.nn.init.normal_(ve.weight, mean=0.0, std=0.01)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
         n_embd = self.config.n_embd
         s = 3 ** 0.5 * n_embd ** -0.5
@@ -452,6 +457,7 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
+        self.ve_lambdas.fill_(0.1)
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(
             self.rotary_seq_len,
@@ -489,11 +495,13 @@ class GPT(nn.Module):
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
+        ve_params = sum(ve.weight.numel() for ve in self.value_embeds)
         nparams_exclude = (
             self.transformer.wte.weight.numel()
-            + self.value_emb.weight.numel()
+            + ve_params
             + self.resid_lambdas.numel()
             + self.x0_lambdas.numel()
+            + self.ve_lambdas.numel()
         )
         h = self.config.n_head
         q = self.config.n_embd // self.config.n_head
@@ -507,10 +515,10 @@ class GPT(nn.Module):
 
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
-        value_emb = sum(p.numel() for p in self.value_emb.parameters())
+        value_emb = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.ve_lambdas.numel()
         total = wte + value_emb + lm_head + transformer_matrices + scalars
         return {
             "wte": wte,
@@ -526,10 +534,11 @@ class GPT(nn.Module):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
-        value_emb_params = list(self.value_emb.parameters())
+        value_emb_params = list(self.value_embeds.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
+        ve_lambda_params = [self.ve_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
             + len(embedding_params)
@@ -537,6 +546,7 @@ class GPT(nn.Module):
             + len(lm_head_params)
             + len(resid_params)
             + len(x0_params)
+            + len(ve_lambda_params)
         )
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
@@ -546,6 +556,7 @@ class GPT(nn.Module):
             dict(kind="adamw", params=value_emb_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(kind="adamw", params=ve_lambda_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
         muon_group_chunk = 8
         for shape in sorted({p.shape for p in matrix_params}):
@@ -576,9 +587,10 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        ve = self.value_emb(idx)
+        ves = [emb(idx) for emb in self.value_embeds]
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+            ve = sum(self.ve_lambdas[j, i] * ves[j] for j in range(self.num_ve))
             window_size = self.window_sizes[i]
             x = block(x, cos_sin, window_size, ve=ve)
         x = norm(x)
