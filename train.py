@@ -405,10 +405,14 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        self.conv = nn.Conv1d(config.n_embd, config.n_embd, kernel_size=4,
+                              groups=config.n_embd, bias=False)
         self.use_mlp_checkpointing = config.use_activation_checkpointing
 
     def forward(self, x, cos_sin, window_size, ve=None):
-        x = x + self.attn(norm(x), cos_sin, window_size, ve=ve)
+        # Causal depthwise conv: pad left by kernel-1 for causal masking
+        conv_out = self.conv(F.pad(x.transpose(1, 2), (3, 0))).transpose(1, 2)
+        x = x + self.attn(norm(x), cos_sin, window_size, ve=ve) + conv_out
         if self.use_mlp_checkpointing:
             x = x + torch_checkpoint(self.mlp, norm(x), use_reentrant=False)
         else:
@@ -450,6 +454,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            torch.nn.init.zeros_(block.conv.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
         head_dim = self.config.n_embd // self.config.n_head
@@ -524,7 +529,9 @@ class GPT(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        # Separate 2D matrix params (Muon) from conv params (AdamW)
+        matrix_params = [p for n, p in self.transformer.h.named_parameters() if 'conv' not in n]
+        conv_params = [p for n, p in self.transformer.h.named_parameters() if 'conv' in n]
         embedding_params = list(self.transformer.wte.parameters())
         value_emb_params = list(self.value_emb.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -532,6 +539,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
+            + len(conv_params)
             + len(embedding_params)
             + len(value_emb_params)
             + len(lm_head_params)
@@ -544,6 +552,7 @@ class GPT(nn.Module):
             dict(kind="adamw", params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=value_emb_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind="adamw", params=conv_params, lr=matrix_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind="adamw", params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
