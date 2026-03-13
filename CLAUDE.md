@@ -103,7 +103,7 @@ These are the **fairness invariants** that make experiments comparable:
 3. **`evaluate_bpb()`** — the metric definition (nats per byte -> bits per byte)
 4. **Dataset/tokenizer identity** — ClimbMix with GPT-2 tokenizer
 5. **Evaluation data** — the val split must remain untouched
-6. **Minimum model size: ~200M params** — experiments #35, #58 proved smaller/shallower models process fewer tokens and perform worse. Increasing model size is allowed; decreasing below ~200M is forbidden.
+6. **URGENT — Minimum model size: ~200M params — DO NOT shrink the model.** From experiment #35 onward, every attempt to reduce model size (fewer layers, smaller dim) resulted in WORSE val_bpb because fewer tokens are processed. Experiments #35, #58 are definitive proof. Increasing model size above ~200M is allowed. Decreasing below ~200M is FORBIDDEN. Do not try it again.
 
 ## Hardware Constraints
 
