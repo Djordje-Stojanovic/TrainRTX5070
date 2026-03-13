@@ -391,13 +391,18 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        hidden = ((int(config.n_embd * 8 / 3) + 63) // 64) * 64
-        self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
-        self.c_up = nn.Linear(config.n_embd, hidden, bias=False)
-        self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
+        # Hourglass FFN: 2 residual sub-MLPs (wide→narrow→wide)
+        # hidden=1536 matches SwiGLU param count (4 * 768 * 1536 = 3 * 768 * 2048)
+        hidden = ((config.n_embd * 2 + 63) // 64) * 64
+        self.c_down1 = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_up1 = nn.Linear(hidden, config.n_embd, bias=False)
+        self.c_down2 = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_up2 = nn.Linear(hidden, config.n_embd, bias=False)
 
     def forward(self, x):
-        return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
+        x = x + self.c_up1(F.silu(self.c_down1(x)))
+        x = x + self.c_up2(F.silu(self.c_down2(x)))
+        return x
 
 
 class Block(nn.Module):
@@ -447,9 +452,10 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
-            torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            torch.nn.init.uniform_(block.mlp.c_down1.weight, -s, s)
+            torch.nn.init.zeros_(block.mlp.c_up1.weight)
+            torch.nn.init.uniform_(block.mlp.c_down2.weight, -s, s)
+            torch.nn.init.zeros_(block.mlp.c_up2.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
         head_dim = self.config.n_embd // self.config.n_head
