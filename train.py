@@ -435,7 +435,7 @@ class GPT(nn.Module):
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
         self._window_warmup = None
-        self._current_short_window = config.short_window
+        self._window_warmup_phases = None
 
     @torch.no_grad()
     def init_weights(self, embed_dtype=torch.bfloat16):
@@ -570,19 +570,16 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction="mean", progress=0.0):
+    def set_window_phase(self, phase_idx):
+        """Switch to a precomputed window phase (call OUTSIDE compiled forward)."""
+        if self._window_warmup_phases is not None:
+            phase_idx = min(phase_idx, len(self._window_warmup_phases) - 1)
+            self.window_sizes = self._window_warmup_phases[phase_idx]
+
+    def forward(self, idx, targets=None, reduction="mean"):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
-
-        # Dynamic window warmup: pick phase based on progress
-        if self._window_warmup is not None:
-            n_phases = len(self._window_warmup)
-            phase_idx = min(int(progress * n_phases), n_phases - 1)
-            current_short = self._window_warmup[phase_idx]
-            if current_short != self._current_short_window:
-                self._current_short_window = current_short
-                self.window_sizes = self._compute_window_sizes(self.config, short_window_override=current_short)
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -1026,7 +1023,13 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         model = GPT(config)
     model.to_empty(device=runtime.device)
     model.init_weights(embed_dtype=runtime.amp_dtype)
-    model._window_warmup = WINDOW_WARMUP
+    if WINDOW_WARMUP is not None:
+        model._window_warmup = WINDOW_WARMUP
+        model._window_warmup_phases = [
+            model._compute_window_sizes(config, short_window_override=w)
+            for w in WINDOW_WARMUP
+        ]
+        model.set_window_phase(0)  # start with smallest window
 
     param_counts = model.num_scaling_params()
     num_params = param_counts["total"]
@@ -1118,9 +1121,14 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         torch.cuda.synchronize()
         t0 = time.time()
         progress = min(total_training_time / max(target_training_seconds, 1e-6), 1.0)
+        if WINDOW_WARMUP is not None:
+            n_phases = len(WINDOW_WARMUP)
+            phase_idx = min(int(progress * n_phases), n_phases - 1)
+            raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+            raw_model.set_window_phase(phase_idx)
         for _ in range(grad_accum_steps):
             with autocast_ctx:
-                loss = model(x, y, progress=progress)
+                loss = model(x, y)
             train_loss = loss.detach()
             loss = loss / grad_accum_steps
             loss.backward()
