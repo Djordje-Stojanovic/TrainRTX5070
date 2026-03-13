@@ -35,6 +35,7 @@ Each experiment runs on a single RTX 5070 (12GB). The training script runs for a
 - `evaluate_bpb()` function definition
 - Dataset identity (ClimbMix) and tokenizer (GPT-2, vocab 50257)
 - Validation split data
+- Minimum model size: ~200M params (experiments #35, #58 proved smaller models are worse; increasing is allowed, decreasing below ~200M is forbidden)
 
 **The goal is simple: get the lowest val_bpb on ClimbMix.** Since the time budget is fixed, you don't need to worry about training time — it's always 20 minutes. Everything else is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
 
